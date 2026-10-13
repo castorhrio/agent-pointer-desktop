@@ -28,8 +28,8 @@ public static class ArgParser
     private static readonly HashSet<string> BoolFlags = new(StringComparer.Ordinal)
     {
         "--mouse", "--no-raise", "--no-animation", "--follow", "--until-click", "--until-any-click",
-        "--close-button", "--say", "--png", "--dry-run", "--json", "--help", "--version",
-        "--all", "--hook", "--keep-alive", "--raise",
+        "--close-button", "--say", "--flash", "--notify", "--png", "--dry-run", "--json",
+        "--help", "--version", "--all", "--hook", "--keep-alive", "--raise",
     };
 
     /// <summary>上游的 macOS 专属参数。在 Windows 上明确拒绝，不静默忽略。</summary>
@@ -41,7 +41,7 @@ public static class ArgParser
     /// <summary>上游支持、Windows 版 v1 未实现的行为参数。接受但标记为未生效。</summary>
     private static readonly HashSet<string> IneffectiveOnWindows = new(StringComparer.Ordinal)
     {
-        "--follow", "--say", "--png",
+        "--follow", "--png",
     };
 
     private static readonly string[] ColorNames =
@@ -305,9 +305,11 @@ public static class ArgParser
                 CloseButton = switches.Contains("--close-button"),
                 Say = switches.Contains("--say"),
                 Voice = flags.GetValueOrDefault("--voice"),
+                Flash = switches.Contains("--flash"),
+                Notify = switches.Contains("--notify"),
                 Png = switches.Contains("--png"),
                 IneffectiveFlags = ineffective
-                    .Concat(new[] { "--voice", "--edge-color" }.Where(flags.ContainsKey))
+                    .Concat(new[] { "--edge-color" }.Where(flags.ContainsKey))
                     .Distinct().ToArray(),
             },
         };
@@ -576,6 +578,10 @@ public static class ArgParser
           --close-button         牌子右端画一个圆形 ×，点它即收起（原因 closed）
           --until-click          用户点到目标时收起（原因 target-clicked），点击照常送达下层应用
           --until-any-click      用户在任何位置点一下即收起
+          --say                  上屏时把牌子上的话念出来（去掉 {{ }}，只念值本身）
+          --voice <name>         --say 使用的语音，按名称子串匹配已安装语音；找不到用默认并警告
+          --flash                目标窗口不在前台时闪 3 次任务栏按钮
+          --notify               额外弹一条系统通知（标题 AgentPointer）
 
         点击交互：
           点牌子或箭杆会立刻收起箭头（原因 clicked）；目标附近与空白像素继续穿透到下层应用
@@ -589,7 +595,7 @@ public static class ArgParser
           --help --version
 
         尚不支持：
-          --follow --say --voice --png --edge-color
+          --follow --png --edge-color
           --style ring|box、--shape zigzag|spiral、其他 anchor
           上述外观/行为兼容参数会给出未生效提示，--json 中见 ineffective
           --peekaboo / --snapshot 是 macOS 专属，返回退出码 2

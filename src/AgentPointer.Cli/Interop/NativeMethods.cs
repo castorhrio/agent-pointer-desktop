@@ -315,6 +315,30 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
+    // ---------------- 任务栏闪烁 ----------------
+
+    public const uint FLASHW_CAPTION = 0x00000001;
+    public const uint FLASHW_TRAY = 0x00000002;
+    public const uint FLASHW_TIMERNOFG = 0x0000000C;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    /// <summary>
+    /// 闪烁任务栏按钮。<c>FLASHW_TIMERNOFG</c> 让系统在窗口回到前台时自己停止闪烁，
+    /// 不必再补一次 <c>FLASHW_STOP</c>。
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+
     // ---------------- 进程 ----------------
 
     /// <summary>SYNCHRONIZE：只给"等进程退出"用，比 PROCESS_ALL_ACCESS 权限低得多。</summary>

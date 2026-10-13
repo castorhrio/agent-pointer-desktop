@@ -121,10 +121,21 @@ public sealed record BehaviorSpec
     public bool UntilAnyClick { get; init; }
 
     public bool CloseButton { get; init; }
+
+    /// <summary>--say：上屏时把牌子上的话念出来（后台线程，覆盖层一秒都不会被挡住）。</summary>
     public bool Say { get; init; }
 
-    /// <summary>--voice：--say 的语音（解析接受，Windows 版未实现）。</summary>
+    /// <summary>
+    /// --voice：--say 使用的语音名，大小写无关的子串匹配；
+    /// 没给或没匹配上就按文本语言挑，再退到系统默认语音。
+    /// </summary>
     public string? Voice { get; init; }
+
+    /// <summary>--flash：目标窗口不在前台时闪 3 次任务栏按钮。</summary>
+    public bool Flash { get; init; }
+
+    /// <summary>--notify：额外弹一条系统通知（标题 AgentPointer）。</summary>
+    public bool Notify { get; init; }
 
     public bool Png { get; init; }
 

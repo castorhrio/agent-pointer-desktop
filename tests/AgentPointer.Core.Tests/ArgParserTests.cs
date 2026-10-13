@@ -437,7 +437,6 @@ public class ArgParserTests
 
     [Theory]
     [InlineData("--follow")]
-    [InlineData("--say")]
     [InlineData("--png")]
     public void Windows未实现的行为参数被接受而不报错(string flag)
     {
@@ -448,7 +447,7 @@ public class ArgParserTests
     [Fact]
     public void 未实现参数在json输出里可被识别()
     {
-        var r = Ok("point", "--at", "1,1", "--follow", "--say");
+        var r = Ok("point", "--at", "1,1", "--follow", "--png");
         Assert.Equal(2, r.Command!.Behavior.IneffectiveFlags.Count);
     }
 
@@ -460,11 +459,56 @@ public class ArgParserTests
     }
 
     [Fact]
-    public void 未实现的语音与边色明确标记()
+    public void 边色仍标记为未生效而语音已生效()
     {
         var r = Ok("point", "--at", "1,1", "--voice", "zira", "--edge-color", "red");
-        Assert.Contains("--voice", r.Command!.Behavior.IneffectiveFlags);
+        Assert.DoesNotContain("--voice", r.Command!.Behavior.IneffectiveFlags);
         Assert.Contains("--edge-color", r.Command.Behavior.IneffectiveFlags);
+    }
+
+    // ---------------- 注意力特性：--say / --voice / --flash / --notify ----------------
+
+    [Fact]
+    public void say被解析且不再标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--say");
+        Assert.True(r.Command!.Behavior.Say);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void say默认关闭()
+    {
+        Assert.False(Ok("point", "--at", "1,1").Command!.Behavior.Say);
+    }
+
+    [Fact]
+    public void voice缺少取值退出码为2()
+    {
+        var r = Parse("point", "--at", "1,1", "--voice");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--voice", r.Error);
+    }
+
+    [Fact]
+    public void voice被解析且不标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--say", "--voice", "Microsoft Zira");
+        Assert.Equal("Microsoft Zira", r.Command!.Behavior.Voice);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void flash与notify是开关且默认关闭()
+    {
+        var defaults = Ok("point", "--at", "1,1").Command!.Behavior;
+        Assert.False(defaults.Flash);
+        Assert.False(defaults.Notify);
+
+        var r = Ok("point", "--at", "1,1", "--flash", "--notify");
+        Assert.True(r.Command!.Behavior.Flash);
+        Assert.True(r.Command.Behavior.Notify);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
     }
 
     // ---------------- 点击收场：牌子本身、关闭按钮、点目标 ----------------

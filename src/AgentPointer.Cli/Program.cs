@@ -211,7 +211,7 @@ internal static class Program
 
         using var manager = new OverlayManager();
 
-        var target = ResolveTarget(manager, command, out var element, out var targetRect);
+        var target = ResolveTarget(manager, command, out var element, out var targetRect, out var targetWindow);
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -285,6 +285,21 @@ internal static class Program
             }, JsonOptions));
             ShownSignal.Signal();
             Environment.SetEnvironmentVariable(ShownSignal.ResultEnvironmentVariable, null);
+        }
+
+        // 3) 注意力特性：念牌子（--say）、闪任务栏（--flash）、系统通知（--notify）。
+        //    全部在箭头已经上屏之后启动，任何一个失败都只写 stderr，不影响箭头本身。
+        using var speaker = command.Behavior.Say
+            ? SignSpeaker.Start(sign.DisplayText, command.Behavior.Voice, command.Json)
+            : null;
+
+        using var toast = command.Behavior.Notify
+            ? ToastNotifier.Show(sign.DisplayText, command.Json)
+            : null;
+
+        if (command.Behavior.Flash)
+        {
+            FlashTarget(targetWindow, command.Json);
         }
 
         // duration=0 表示不限时；缺省时由解析器按子命令填好默认值。
@@ -366,6 +381,34 @@ internal static class Program
         return notices.Distinct().ToArray();
     }
 
+    /// <summary>
+    /// --flash：目标窗口不在前台时闪 3 次任务栏按钮。
+    /// <c>FLASHW_TIMERNOFG</c> 让系统在窗口回到前台时自动停闪，不必再补一次 FLASHW_STOP。
+    /// 没有 HWND 的目标（--at / --rect / --mouse）什么也不做。
+    /// </summary>
+    private static void FlashTarget(IntPtr window, bool json)
+    {
+        if (window == IntPtr.Zero || NativeMethods.GetForegroundWindow() == window) return;
+
+        try
+        {
+            var info = new NativeMethods.FLASHWINFO
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.FLASHWINFO>(),
+                hwnd = window,
+                dwFlags = NativeMethods.FLASHW_TRAY | NativeMethods.FLASHW_TIMERNOFG,
+                uCount = 3,
+                dwTimeout = 0,
+            };
+
+            NativeMethods.FlashWindowEx(ref info);
+        }
+        catch (Exception ex)
+        {
+            if (!json) Err($"任务栏闪烁失败：{ex.Message}");
+        }
+    }
+
     /// <summary>--at / --mouse 没有矩形，用一个以目标为心的小方框代替（逻辑像素，再乘 DPI）。</summary>
     private const int UntilClickRadiusPx = 24;
 
@@ -409,11 +452,15 @@ internal static class Program
     /// 供 --json 回显命中的元素。</para>
     /// <para><paramref name="targetRect"/> 是目标的全局物理像素包围盒（<c>--at</c> / <c>--mouse</c>
     /// 只有 1x1 的点），供 <c>--until-click</c> 判断点击落在了哪里。</para>
+    /// <para><paramref name="targetWindow"/> 是目标所在的顶层窗口句柄（<c>--at</c> / <c>--rect</c> /
+    /// <c>--mouse</c> 没有窗口，返回 <see cref="IntPtr.Zero"/>），供 <c>--flash</c> 闪任务栏按钮。</para>
     /// </summary>
     private static Point ResolveTarget(
-        OverlayManager manager, PointerCommand command, out ElementInfo? element, out Rectangle targetRect)
+        OverlayManager manager, PointerCommand command,
+        out ElementInfo? element, out Rectangle targetRect, out IntPtr targetWindow)
     {
         element = null;
+        targetWindow = IntPtr.Zero;
         var target = command.Target;
 
         switch (target.Kind)
@@ -451,6 +498,7 @@ internal static class Program
                 }
 
                 targetRect = match.Bounds;
+                targetWindow = match.Handle;
 
                 // --anchor：窗口内的锚点。center 默认；title 取标题栏区（上缘 10%）的中点
                 return command.Look.Anchor?.ToLowerInvariant() switch
@@ -479,6 +527,7 @@ internal static class Program
                 // 元素包围盒走与 --rect 完全相同的渲染路径（取中心）
                 var bounds = new Rectangle(element.X, element.Y, element.Width, element.Height);
                 targetRect = bounds;
+                targetWindow = window.Handle;
                 return new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
             }
 

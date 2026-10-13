@@ -32,6 +32,7 @@ Claude Code / Codex skill file status can be checked; complete tasks in a live a
 | Focus preservation | Guidance keeps your current input focus; explicit `--raise` requests foreground activation |
 | Click-through | Mouse clicks reach the app beneath the overlay, verified across processes |
 | Click to dismiss | A click on the action label or the arrow shaft ends the guidance right away; the target stays click-through |
+| Attention | `--say` reads the action text aloud (`--voice` picks the voice), `--flash` blinks the target window's taskbar button, `--notify` shows a Windows notification |
 | Multiple agents | Stop guidance by owner; overlays disappear when their owner exits |
 | Desktop and CLI | The panel handles setup and demos; agents can call the CLI independently |
 | System language | Follow the Windows display language by default, with manual English / Chinese choices |
@@ -158,6 +159,14 @@ Appearance options include `--text`, `--from`, `--color`, `--size S|M|L`, `--sha
 `--close-button` puts a small × inside the action label. `--no-animation` disables entrance, breathing,
 and fade animations. See `agentpointer --help` for all options.
 
+`--say` reads the action text aloud as soon as the guidance appears, on a background thread, so the arrow
+is never delayed by the voice. `{{value}}` placeholders are spoken as the bare value, without braces.
+`--voice <name>` selects an installed voice by a case-insensitive name match; an unknown name is not an
+error: the default voice is used and a warning goes to stderr. `--flash` blinks the target window's
+taskbar button three times when that window is not in the foreground, and `--notify` adds a Windows
+notification titled "AgentPointer". Both are off by default; `--flash` needs a window or element target.
+Failure of any of these three is reported on stderr only and never affects the arrow.
+
 A click on the action label or the arrow shaft ends the guidance immediately, without a round trip
 through the agent; the target itself and the space around the arrow head stay click-through.
 `--until-click` ends the guidance when the human clicks the target, `--until-any-click` when they
@@ -218,7 +227,7 @@ Some option names, defaults, and visual rules follow bigarrow. Compatibility is 
 - `--element` matches UI Automation elements by label (plus optional `--role`); `elements` lists what a
   window exposes. Native apps and window chrome work as-is; browser page content needs Chrome or another
   browser started with accessibility enabled (`--force-renderer-accessibility`).
-- `--follow`, `--say`, `--voice`, `--png`, and `--edge-color` are parsed only.
+- `--follow`, `--png`, and `--edge-color` are parsed only.
   JSON lists them in `ineffective`; text output warns about them.
 - `ring` / `box` fall back to `arrow`, and `zigzag` / `spiral` fall back to `bend`. Window anchors currently support only `center` / `title`.
   These free upstream styles are pending implementation. The project has no delivered paid features.
