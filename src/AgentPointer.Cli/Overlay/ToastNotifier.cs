@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using AgentPointer.Core.Cli;
 
 namespace AgentPointer.Cli.Overlay;
 
@@ -51,7 +52,8 @@ internal sealed class ToastNotifier : IDisposable
         catch (Exception ex)
         {
             owned?.Dispose();
-            Warn(json, $"通知未能显示：{ex.Message}");
+            Warn(json, Lang.T(
+                $"通知未能显示：{ex.Message}", $"The notification could not be shown: {ex.Message}"));
             return null;
         }
     }

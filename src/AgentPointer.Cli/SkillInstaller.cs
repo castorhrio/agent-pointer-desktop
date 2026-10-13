@@ -28,7 +28,8 @@ internal static class SkillInstaller
         var json = command.Json;
         var dryRun = command.DryRun;
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(profile)) throw new IOException("无法确定用户目录。");
+        if (string.IsNullOrWhiteSpace(profile)) throw new IOException(Lang.T(
+            "无法确定用户目录。", "Could not determine the user profile directory."));
 
         // --claude / --codex 都是"只装哪个"；两个都不给才是两个都装。
         var wantClaude = command.InstallClaude || !command.InstallCodex;
@@ -38,7 +39,8 @@ internal static class SkillInstaller
         if (wantClaude) directories.Add(("Claude Code", Path.Combine(profile, ".claude", "skills", "agentpointer")));
         if (wantCodex) directories.Add(("Codex", Path.Combine(profile, ".agents", "skills", "agentpointer")));
 
-        var executable = Environment.ProcessPath ?? throw new IOException("无法确定程序路径。");
+        var executable = Environment.ProcessPath ?? throw new IOException(Lang.T(
+            "无法确定程序路径。", "Could not determine the program path."));
         static string Quote(string path) => "'" + path.Replace("'", "''") + "'";
         var invocation = "& " + Quote(executable);
         if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
@@ -175,19 +177,28 @@ internal static class SkillInstaller
     private static IEnumerable<string> Describe(
         SkillReport[] skills, PointerCommand command, string pathStatus, bool dryRun)
     {
-        if (dryRun) yield return "dry-run：以下技能路径没有写入。";
+        if (dryRun) yield return Lang.T(
+            "dry-run：以下技能路径没有写入。", "dry-run: no skill path was written.");
 
         foreach (var skill in skills)
         {
             var where = $"{skill.agent} → {skill.directory}";
             yield return skill.status switch
             {
-                "installed" => dryRun ? $"将安装：{where}" : $"技能已安装：{where}",
-                "updated" => dryRun ? $"将覆盖：{where}" : $"技能已更新：{where}",
-                "up-to-date" => $"已是最新：{where}",
+                "installed" => dryRun
+                    ? Lang.T($"将安装：{where}", $"will install: {where}")
+                    : Lang.T($"技能已安装：{where}", $"skill installed: {where}"),
+                "updated" => dryRun
+                    ? Lang.T($"将覆盖：{where}", $"will overwrite: {where}")
+                    : Lang.T($"技能已更新：{where}", $"skill updated: {where}"),
+                "up-to-date" => Lang.T($"已是最新：{where}", $"already up to date: {where}"),
                 _ => dryRun
-                    ? $"已存在且内容不同，将跳过：{where}（要覆盖需 --force）"
-                    : $"已存在且内容不同，已跳过：{where}（确认要覆盖时重跑并加 --force）",
+                    ? Lang.T(
+                        $"已存在且内容不同，将跳过：{where}（要覆盖需 --force）",
+                        $"exists with different content, will skip: {where} (rerun with --force to overwrite)")
+                    : Lang.T(
+                        $"已存在且内容不同，已跳过：{where}（确认要覆盖时重跑并加 --force）",
+                        $"exists with different content, skipped: {where} (rerun with --force to overwrite)"),
             };
         }
 
@@ -196,10 +207,16 @@ internal static class SkillInstaller
         yield return pathStatus switch
         {
             "added" => dryRun
-                ? "将把本程序所在目录加入用户 PATH；真正执行后请新开一个终端。"
-                : "已把本程序所在目录加入用户 PATH，请新开一个终端让新终端看到它。",
-            "already" => "用户 PATH 里已经有本程序所在目录，未重复添加。",
-            _ => "未修改用户 PATH。",
+                ? Lang.T(
+                    "将把本程序所在目录加入用户 PATH；真正执行后请新开一个终端。",
+                    "will add the program's directory to the user PATH; after a real run, open a new terminal.")
+                : Lang.T(
+                    "已把本程序所在目录加入用户 PATH，请新开一个终端让新终端看到它。",
+                    "added the program's directory to the user PATH; open a new terminal to see it."),
+            "already" => Lang.T(
+                "用户 PATH 里已经有本程序所在目录，未重复添加。",
+                "the user PATH already contains the program's directory, nothing was added."),
+            _ => Lang.T("未修改用户 PATH。", "the user PATH was not changed."),
         };
     }
 
@@ -210,7 +227,9 @@ internal static class SkillInstaller
     private static (string newValue, bool changed) MergeUserPath(string directory)
     {
         using var key = Registry.CurrentUser.OpenSubKey(UserEnvironmentKey, writable: false)
-            ?? throw new IOException(@"读不到用户环境变量键 HKCU\Environment。");
+            ?? throw new IOException(Lang.T(
+                @"读不到用户环境变量键 HKCU\Environment。",
+                @"Could not read the user environment key HKCU\Environment."));
 
         var current = key.GetValue("Path", string.Empty, RegistryValueOptions.DoNotExpandEnvironmentNames)
             as string ?? string.Empty;
@@ -221,7 +240,9 @@ internal static class SkillInstaller
     private static void WriteUserPath(string value)
     {
         using var key = Registry.CurrentUser.CreateSubKey(UserEnvironmentKey, writable: true)
-            ?? throw new IOException(@"写不了用户环境变量键 HKCU\Environment。");
+            ?? throw new IOException(Lang.T(
+                @"写不了用户环境变量键 HKCU\Environment。",
+                @"Could not write the user environment key HKCU\Environment."));
 
         var kind = RegistryValueKind.ExpandString;
         try
@@ -260,7 +281,8 @@ internal static class SkillInstaller
     private static string ReadResource(string name)
     {
         using var resource = typeof(SkillInstaller).Assembly.GetManifestResourceStream(name)
-            ?? throw new IOException("安装包缺少技能资源：" + name);
+            ?? throw new IOException(Lang.T(
+                "安装包缺少技能资源：" + name, "The package is missing the skill resource: " + name));
         using var reader = new StreamReader(resource, Encoding.UTF8);
         return reader.ReadToEnd();
     }

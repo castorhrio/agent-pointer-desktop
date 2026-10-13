@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Speech.Synthesis;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Rendering;
 
 namespace AgentPointer.Cli.Overlay;
@@ -37,7 +38,9 @@ internal sealed class SignSpeaker : IDisposable
         }
         catch (Exception ex)
         {
-            Warn(json, $"语音配置失败，改用系统默认语音：{ex.Message}");
+            Warn(json, Lang.T(
+                $"语音配置失败，改用系统默认语音：{ex.Message}",
+                $"Voice configuration failed, falling back to the system default: {ex.Message}"));
         }
 
         _thread = new Thread(() => Speak(spoken)) { IsBackground = true, Name = "agentpointer-speech" };
@@ -58,7 +61,8 @@ internal sealed class SignSpeaker : IDisposable
         }
         catch (Exception ex)
         {
-            Warn(json, $"没有可用的语音合成器：{ex.Message}");
+            Warn(json, Lang.T(
+                $"没有可用的语音合成器：{ex.Message}", $"No speech synthesizer available: {ex.Message}"));
             return null;
         }
 
@@ -68,7 +72,7 @@ internal sealed class SignSpeaker : IDisposable
         }
         catch (Exception ex)
         {
-            Warn(json, $"朗读未能启动：{ex.Message}");
+            Warn(json, Lang.T($"朗读未能启动：{ex.Message}", $"Could not start speaking: {ex.Message}"));
             synth.Dispose();
             return null;
         }
@@ -86,7 +90,7 @@ internal sealed class SignSpeaker : IDisposable
         }
         catch (Exception ex)
         {
-            Warn(_json, $"朗读失败：{ex.Message}");
+            Warn(_json, Lang.T($"朗读失败：{ex.Message}", $"Speaking failed: {ex.Message}"));
         }
         finally
         {
@@ -128,7 +132,9 @@ internal sealed class SignSpeaker : IDisposable
             }
 
             // 未知语音不是错误：退回默认，只提醒一句
-            Warn(json, $"找不到名为 '{wanted}' 的语音，改用默认语音。");
+            Warn(json, Lang.T(
+                $"找不到名为 '{wanted}' 的语音，改用默认语音。",
+                $"No voice named '{wanted}', falling back to the default voice."));
         }
 
         // 中文文本优先中文语音；否则优先英文语音；都没有就交给系统默认

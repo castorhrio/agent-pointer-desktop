@@ -79,10 +79,14 @@ public static class ArgParser
         env ??= Environment.GetEnvironmentVariable;
         args ??= Array.Empty<string>();
 
+        // 语言必须在任何错误信息之前定下来：下面每条消息（包括 --lang 自己的）都靠它
+        Lang.Configure(LanguageFromArgs(args), env, CultureInfo.CurrentUICulture);
+
         if (args.Length == 0)
         {
-            return ParseResult.BadInput(
-                "缺少子命令。可用子命令：point / start / stop / elements / doctor / install-skill");
+            return ParseResult.BadInput(Lang.T(
+                "缺少子命令。可用子命令：point / start / stop / elements / doctor / install-skill",
+                "Missing command. Available: point / start / stop / elements / doctor / install-skill"));
         }
 
         // --lang 允许出现在任何位置（包括与 --help 一起），所以先把取值整体校验一遍：
@@ -96,7 +100,9 @@ public static class ArgParser
                 var inline = token["--lang=".Length..];
                 if (!TryNormalizeLanguage(inline, out _))
                 {
-                    return ParseResult.BadInput($"参数 '--lang' 取值 '{inline}' 非法。可用：en / zh");
+                    return ParseResult.BadInput(Lang.T(
+                        $"参数 '--lang' 取值 '{inline}' 非法。可用：en / zh",
+                        $"Argument '--lang' has the invalid value '{inline}'. Available: en / zh"));
                 }
 
                 continue;
@@ -106,12 +112,16 @@ public static class ArgParser
 
             if (scan + 1 >= args.Length)
             {
-                return ParseResult.BadInput("参数 '--lang' 缺少取值。可用：en / zh");
+                return ParseResult.BadInput(Lang.T(
+                    "参数 '--lang' 缺少取值。可用：en / zh",
+                    "Argument '--lang' is missing its value. Available: en / zh"));
             }
 
             if (!TryNormalizeLanguage(args[scan + 1], out _))
             {
-                return ParseResult.BadInput($"参数 '--lang' 取值 '{args[scan + 1]}' 非法。可用：en / zh");
+                return ParseResult.BadInput(Lang.T(
+                    $"参数 '--lang' 取值 '{args[scan + 1]}' 非法。可用：en / zh",
+                    $"Argument '--lang' has the invalid value '{args[scan + 1]}'. Available: en / zh"));
             }
 
             scan++;
@@ -125,7 +135,9 @@ public static class ArgParser
 
         if (!TryParseKind(args[0], out var kind))
         {
-            return ParseResult.BadInput($"未知子命令 '{args[0]}'。可用子命令：point / start / stop / elements / doctor / install-skill");
+            return ParseResult.BadInput(Lang.T(
+                $"未知子命令 '{args[0]}'。可用子命令：point / start / stop / elements / doctor / install-skill",
+                $"Unknown command '{args[0]}'. Available: point / start / stop / elements / doctor / install-skill"));
         }
 
         index++;
@@ -145,7 +157,9 @@ public static class ArgParser
             if (!token.StartsWith('-'))
             {
                 badFlag = token;
-                badReason = "位置参数不受支持，所有输入都必须以 --key 形式给出";
+                badReason = Lang.T(
+                    "位置参数不受支持，所有输入都必须以 --key 形式给出",
+                    "positional arguments are not supported, every input must be given as --key");
                 break;
             }
 
@@ -168,7 +182,9 @@ public static class ArgParser
 
             if (MacOnlyFlags.Contains(name))
             {
-                return ParseResult.BadInput($"'{name}' 是 macOS 专属功能，Windows 上没有对应物");
+                return ParseResult.BadInput(Lang.T(
+                    $"'{name}' 是 macOS 专属功能，Windows 上没有对应物",
+                    $"'{name}' is macOS-only and has no Windows counterpart"));
             }
 
             if (BoolFlags.Contains(name))
@@ -185,7 +201,7 @@ public static class ArgParser
                     if (index >= args.Length)
                     {
                         badFlag = name;
-                        badReason = "缺少取值";
+                        badReason = Lang.T("缺少取值", "is missing its value");
                         break;
                     }
 
@@ -199,13 +215,18 @@ public static class ArgParser
 
             badFlag = name;
             badReason = ValueFlags.Contains(name) || BoolFlags.Contains(name)
-                ? "不受支持的参数"
-                : "未知参数";
+                ? Lang.T("不受支持的参数", "is not supported")
+                : Lang.T("未知参数", "is not a known argument");
         }
 
         if (badFlag is not null)
         {
-            return ParseResult.BadInput($"参数 '{badFlag}' {badReason}");
+            var hint = Lang.T(
+                "运行 agentpointer --help 查看可用参数。",
+                "Run agentpointer --help to see the available arguments.");
+            return ParseResult.BadInput(Lang.T(
+                $"参数 '{badFlag}' {badReason}。{hint}",
+                $"Argument '{badFlag}' {badReason}. {hint}"));
         }
 
         return Build(kind, flags, switches, ineffective, env);
@@ -224,9 +245,11 @@ public static class ArgParser
         {
             if (!FromSides.Contains(fromRaw))
             {
-                return ParseResult.BadInput(
+                return ParseResult.BadInput(Lang.T(
                     $"参数 '--from' 取值 '{fromRaw}' 非法。可用：auto / left / right / top / bottom / " +
-                    "top-left / top-right / bottom-left / bottom-right");
+                    "top-left / top-right / bottom-left / bottom-right",
+                    $"Argument '--from' has the invalid value '{fromRaw}'. Available: auto / left / right / " +
+                    "top / bottom / top-left / top-right / bottom-left / bottom-right"));
             }
 
             from = fromRaw.ToLowerInvariant();
@@ -235,8 +258,10 @@ public static class ArgParser
         string? color = null;
         if (flags.TryGetValue("--color", out var colorRaw) && !TryNormalizeColor(colorRaw, out color))
         {
-            return ParseResult.BadInput(
-                $"参数 '--color' 取值 '{colorRaw}' 非法。可用：{string.Join(" / ", ColorNames)} 或 #RRGGBB / #RGB");
+            var names = string.Join(" / ", ColorNames);
+            return ParseResult.BadInput(Lang.T(
+                $"参数 '--color' 取值 '{colorRaw}' 非法。可用：{names} 或 #RRGGBB / #RGB",
+                $"Argument '--color' has the invalid value '{colorRaw}'. Available: {names} or #RRGGBB / #RGB"));
         }
 
         var enumErrors = new List<string>();
@@ -266,7 +291,7 @@ public static class ArgParser
         if (flags.ContainsKey("--role") && !flags.ContainsKey("--element")
             && kind is CommandKind.Point or CommandKind.Start)
         {
-            return ParseResult.BadInput("--role 需要配合 --element 使用。");
+            return ParseResult.BadInput(Lang.T("--role 需要配合 --element 使用。", "--role needs --element."));
         }
 
         // --logical 只改 at/rect 的坐标解释，给别处没有意义，直接点出来
@@ -274,27 +299,36 @@ public static class ArgParser
             && (kind is CommandKind.Point or CommandKind.Start)
             && target.Kind is not (TargetKind.At or TargetKind.Rect))
         {
-            return ParseResult.BadInput("--logical 需要配合 --at / --rect 使用。");
+            return ParseResult.BadInput(Lang.T(
+                "--logical 需要配合 --at / --rect 使用。", "--logical needs --at / --rect."));
         }
 
         // --hook 是 Claude Code 的 UserPromptSubmit 钩子入口，只在 stop 上成立
         if (switches.Contains("--hook") && kind != CommandKind.Stop)
         {
-            return ParseResult.BadInput("--hook 只用于 stop（Claude Code 的 UserPromptSubmit 钩子）。");
+            return ParseResult.BadInput(Lang.T(
+                "--hook 只用于 stop（Claude Code 的 UserPromptSubmit 钩子）。",
+                "--hook is only valid for stop (Claude Code's UserPromptSubmit hook)."));
         }
 
         // install-skill 专属开关出现在别的子命令上：直接拒绝，别让 agent 以为自己做成了什么
         var installOnly = InstallOnlyFlags.Where(switches.Contains).ToArray();
         if (installOnly.Length > 0 && kind != CommandKind.InstallSkill)
         {
-            return ParseResult.BadInput($"{string.Join(" / ", installOnly)} 只用于 install-skill。");
+            var installOnlyNames = string.Join(" / ", installOnly);
+            return ParseResult.BadInput(Lang.T(
+                $"{installOnlyNames} 只用于 install-skill。",
+                $"{installOnlyNames} is only valid for install-skill."));
         }
 
         // point / start 必须有目标，否则 agent 无从知道指哪
         if (kind is CommandKind.Point or CommandKind.Start && targetResult.Target.Kind == TargetKind.None)
         {
-            return ParseResult.BadInput(
-                $"{kind.ToString().ToLowerInvariant()} 需要一个目标：--at / --rect / --mouse / --window / --app / --element 至少给一个");
+            var commandName = kind.ToString().ToLowerInvariant();
+            return ParseResult.BadInput(Lang.T(
+                $"{commandName} 需要一个目标：--at / --rect / --mouse / --window / --app / --element 至少给一个",
+                $"{commandName} needs a target: give at least one of "
+                + "--at / --rect / --mouse / --window / --app / --element"));
         }
 
         // ---------- 时长 ----------
@@ -310,7 +344,10 @@ public static class ArgParser
             if (!double.TryParse(durationRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
                 || !double.IsFinite(parsed) || parsed < 0)
             {
-                return ParseResult.BadInput($"参数 '--duration' 取值 '{durationRaw}' 非法，必须是 >= 0 的秒数");
+                return ParseResult.BadInput(Lang.T(
+                    $"参数 '--duration' 取值 '{durationRaw}' 非法，必须是 >= 0 的秒数",
+                    $"Argument '--duration' has the invalid value '{durationRaw}', it must be a number of "
+                    + "seconds >= 0"));
             }
 
             duration = parsed;
@@ -398,11 +435,14 @@ public static class ArgParser
         {
             if (flags.ContainsKey("--at") || flags.ContainsKey("--rect") || switches.Contains("--mouse"))
             {
-                return new TargetResult(new TargetSpec(), "--element 与 --at / --rect / --mouse 互斥。");
+                return new TargetResult(new TargetSpec(), Lang.T(
+                    "--element 与 --at / --rect / --mouse 互斥。",
+                    "--element is mutually exclusive with --at / --rect / --mouse."));
             }
             if (string.IsNullOrWhiteSpace(element))
             {
-                return new TargetResult(new TargetSpec(), "参数 '--element' 不能为空");
+                return new TargetResult(new TargetSpec(), Lang.T(
+                    "参数 '--element' 不能为空", "Argument '--element' must not be empty"));
             }
 
             return new TargetResult(
@@ -426,18 +466,20 @@ public static class ArgParser
 
         if (provided.Count > 1)
         {
-            return new TargetResult(
-                new TargetSpec(),
-                $"目标参数互斥，但同时给了 {string.Join(" 和 ", provided)}");
+            var joined = string.Join(Lang.T(" 和 ", " and "), provided);
+            return new TargetResult(new TargetSpec(), Lang.T(
+                $"目标参数互斥，但同时给了 {joined}",
+                $"Target arguments are mutually exclusive, but {joined} were given"));
         }
 
         if (flags.TryGetValue("--at", out var atRaw))
         {
             if (!TryParsePoint(atRaw, out var at))
             {
-                return new TargetResult(
-                    new TargetSpec(),
-                    $"参数 '--at' 取值 '{atRaw}' 非法，格式应为 X,Y（允许负坐标）");
+                return new TargetResult(new TargetSpec(), Lang.T(
+                    $"参数 '--at' 取值 '{atRaw}' 非法，格式应为 X,Y（允许负坐标）",
+                    $"Argument '--at' has the invalid value '{atRaw}', the format is X,Y "
+                    + "(negative coordinates are allowed)"));
             }
 
             return new TargetResult(
@@ -448,9 +490,9 @@ public static class ArgParser
         {
             if (!TryParseRect(rectRaw, out var rect))
             {
-                return new TargetResult(
-                    new TargetSpec(),
-                    $"参数 '--rect' 取值 '{rectRaw}' 非法，格式应为 X,Y,W,H");
+                return new TargetResult(new TargetSpec(), Lang.T(
+                    $"参数 '--rect' 取值 '{rectRaw}' 非法，格式应为 X,Y,W,H",
+                    $"Argument '--rect' has the invalid value '{rectRaw}', the format is X,Y,W,H"));
             }
 
             return new TargetResult(
@@ -467,7 +509,9 @@ public static class ArgParser
         {
             if (string.IsNullOrWhiteSpace(windowQuery))
             {
-                return new TargetResult(new TargetSpec(), "参数 '--window' / '--app' 不能为空");
+                return new TargetResult(new TargetSpec(), Lang.T(
+                    "参数 '--window' / '--app' 不能为空",
+                    "Arguments '--window' / '--app' must not be empty"));
             }
 
             return new TargetResult(
@@ -484,7 +528,10 @@ public static class ArgParser
         if (!flags.TryGetValue("--display", out var raw)) return null;
         if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < 1)
         {
-            error = $"参数 '--display' 取值 '{raw}' 非法，必须是 >= 1 的显示器序号（1-based，见 doctor）";
+            error = Lang.T(
+                $"参数 '--display' 取值 '{raw}' 非法，必须是 >= 1 的显示器序号（1-based，见 doctor）",
+                $"Argument '--display' has the invalid value '{raw}', it must be a display index >= 1 "
+                + "(1-based, see doctor)");
             return null;
         }
 
@@ -530,7 +577,7 @@ public static class ArgParser
         if (!flags.TryGetValue(name, out var raw)) return null;
         if (!Enums.TryGetValue(name, out var allowed))
         {
-            errors.Add($"参数 '{name}' 无法识别");
+            errors.Add(Lang.T($"参数 '{name}' 无法识别", $"Argument '{name}' is not recognised"));
             return null;
         }
 
@@ -543,7 +590,10 @@ public static class ArgParser
             }
         }
 
-        errors.Add($"参数 '{name}' 取值 '{raw}' 非法。可用：{string.Join(" / ", allowed)}");
+        var values = string.Join(" / ", allowed);
+        errors.Add(Lang.T(
+            $"参数 '{name}' 取值 '{raw}' 非法。可用：{values}",
+            $"Argument '{name}' has the invalid value '{raw}'. Available: {values}"));
         return null;
     }
 
@@ -794,22 +844,8 @@ public static class ArgParser
     /// 帮助文本的语言选择：显式 <c>--lang en|zh</c> 优先，其次是环境变量 <c>AGENTPOINTER_LANG</c>，
     /// 最后按 UI 语言（zh-* 中文，其余英文）。取值非法一律当作没给。
     /// </summary>
-    public static string HelpFor(string? lang, CultureInfo? ui)
-    {
-        if (TryNormalizeLanguage(lang, out var explicitLang))
-        {
-            return explicitLang == "zh" ? HelpTextZh : HelpTextEn;
-        }
-
-        if (TryNormalizeLanguage(Environment.GetEnvironmentVariable("AGENTPOINTER_LANG"), out var fromEnvironment))
-        {
-            return fromEnvironment == "zh" ? HelpTextZh : HelpTextEn;
-        }
-
-        var chinese = ui is { } culture
-            && culture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase);
-        return chinese ? HelpTextZh : HelpTextEn;
-    }
+    public static string HelpFor(string? lang, CultureInfo? ui) =>
+        Lang.Resolve(lang, Environment.GetEnvironmentVariable, ui) ? HelpTextZh : HelpTextEn;
 
     /// <summary>
     /// 从原始参数里取 <c>--lang</c>：走帮助路径时参数还没进字典，调用方需要自己扫一遍。
@@ -839,24 +875,6 @@ public static class ArgParser
     }
 
     /// <summary>归一化 --lang：en / zh，大小写无关，也接受 en-US / zh-CN 这类区域写法。</summary>
-    internal static bool TryNormalizeLanguage(string? raw, out string? normalized)
-    {
-        normalized = null;
-        if (string.IsNullOrWhiteSpace(raw)) return false;
-
-        var value = raw.Trim().ToLowerInvariant().Replace('_', '-');
-        if (value == "en" || value.StartsWith("en-", StringComparison.Ordinal))
-        {
-            normalized = "en";
-            return true;
-        }
-
-        if (value == "zh" || value.StartsWith("zh-", StringComparison.Ordinal))
-        {
-            normalized = "zh";
-            return true;
-        }
-
-        return false;
-    }
+    internal static bool TryNormalizeLanguage(string? raw, out string? normalized) =>
+        Lang.TryNormalize(raw, out normalized);
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using AgentPointer.Core;
 using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
@@ -7,12 +8,21 @@ namespace AgentPointer.Core.Tests;
 /// <summary>
 /// 参数契约测试。目标是锁死"与上游 bigarrow 的 CLI 兼容性"——
 /// 这些用例一旦失败，就意味着已有 agent 的脚本会崩。
+///
+/// <para>语言是进程级静态状态，所以本类与 LangTests / HelpTextTests 同属 "Lang" 集合；
+/// 断言里的中文子串靠把语言钉成 zh 来保证稳定，而不是改断言。</para>
 /// </summary>
+[Collection("Lang")]
 public class ArgParserTests
 {
-    /// <summary>隔离环境变量，避免测试机上恰好设置了 CLAUDE_PID 影响断言。</summary>
+    public ArgParserTests() => Lang.Configure("zh", _ => null, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 隔离环境变量，避免测试机上恰好设置了 CLAUDE_PID 影响断言；
+    /// 同时把语言固定为中文（AGENTPOINTER_LANG=zh），断言才能比对中文消息。
+    /// </summary>
     private static ParseResult Parse(params string[] args) =>
-        ArgParser.Parse(args, _ => null);
+        ArgParser.Parse(args, name => name == "AGENTPOINTER_LANG" ? "zh" : null);
 
     private static ParseResult Ok(params string[] args)
     {

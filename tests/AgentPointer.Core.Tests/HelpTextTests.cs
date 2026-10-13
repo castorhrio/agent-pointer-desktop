@@ -6,7 +6,11 @@ namespace AgentPointer.Core.Tests;
 /// <summary>
 /// 帮助文本契约：中英两种语言必须覆盖同一批参数。
 /// 少一个选项就是一种语言下的静默功能缺失。
+///
+/// <para>帮助的语言与错误信息的语言走同一套规则，所以本类与 LangTests / ArgParserTests
+/// 同属 "Lang" 集合，串行执行，避免环境变量被别的测试改掉。</para>
 /// </summary>
+[Collection("Lang")]
 public class HelpTextTests
 {
     /// <summary>两种帮助都必须提到的参数（也就是两套文本共同的对外契约）。</summary>

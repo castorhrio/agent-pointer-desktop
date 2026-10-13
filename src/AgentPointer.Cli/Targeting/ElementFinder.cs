@@ -1,4 +1,5 @@
 using System.Windows.Automation;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Targeting;
 
 namespace AgentPointer.Cli.Targeting;
@@ -112,13 +113,21 @@ internal static class ElementFinder
 
         var suggestions = ElementMatcher.Suggestions(elements, label);
         var hint = suggestions.Count > 0
-            ? $"相近的元素：{string.Join("、", suggestions)}。"
-            : "该窗口没有暴露可用于匹配的元素。";
+            ? Lang.T(
+                $"相近的元素：{string.Join("、", suggestions)}。 ",
+                $"Close matches: {string.Join(", ", suggestions)}. ")
+            : Lang.T(
+                "该窗口没有暴露可用于匹配的元素。 ",
+                "The window exposes no element to match. ");
 
-        var window = string.IsNullOrWhiteSpace(windowTitle) ? "前台窗口" : windowTitle;
+        var window = string.IsNullOrWhiteSpace(windowTitle)
+            ? Lang.T("前台窗口", "the foreground window")
+            : windowTitle;
 
-        throw new TargetNotFoundException(
-            $"未找到元素 \"{label}\"（窗口 \"{window}\"）。{hint}用 agentpointer elements --app ... 查看全部。");
+        throw new TargetNotFoundException(Lang.T(
+            $"未找到元素 \"{label}\"（窗口 \"{window}\"）。{hint}用 agentpointer elements --app ... 查看全部。",
+            $"No element \"{label}\" in window \"{window}\". {hint}"
+            + "Run agentpointer elements --app ... to list them all."));
     }
 
     private static ElementInfo? TryDescribe(AutomationElement element)

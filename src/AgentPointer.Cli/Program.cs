@@ -65,7 +65,9 @@ internal static class Program
         {
             if (command.KeepAlive && (command.Kind != CommandKind.Start || ShownSignal.EventName is null))
             {
-                return Fail(ExitCode.BadInput, "--keep-alive 是后台启动的内部参数。", command.Json);
+                return Fail(ExitCode.BadInput, Lang.T(
+                    "--keep-alive 是后台启动的内部参数。",
+                    "--keep-alive is an internal flag of the background start."), command.Json);
             }
 
             return command.Kind switch
@@ -76,7 +78,7 @@ internal static class Program
                 CommandKind.Start when !command.KeepAlive && !command.DryRun => RunStart(command, args),
                 CommandKind.Point or CommandKind.Start => RunPoint(command),
                 CommandKind.InstallSkill => SkillInstaller.Install(command),
-                _ => Fail(ExitCode.BadInput, "不支持的子命令"),
+                _ => Fail(ExitCode.BadInput, Lang.T("不支持的子命令", "unsupported command")),
             };
         }
         catch (OverlayUnavailableException ex)
@@ -98,7 +100,8 @@ internal static class Program
         catch (Exception ex)
         {
             // 任何未预料的异常都要转成退出码，绝不让调用方看到堆栈
-            return Fail(ExitCode.InternalError, $"内部错误：{ex.Message}", command.Json);
+            return Fail(ExitCode.InternalError, Lang.T(
+                $"内部错误：{ex.Message}", $"Internal error: {ex.Message}"), command.Json);
         }
     }
 
@@ -153,11 +156,14 @@ internal static class Program
                 {
                     if (!NativeMethods.TerminateProcess(process.hProcess, ExitCode.InternalError)) throw new Win32Exception();
                     NativeMethods.WaitForSingleObject(process.hProcess, 2000);
-                    return Fail(ExitCode.InternalError, "后台箭头未能在 5 秒内显示。", command.Json);
+                    return Fail(ExitCode.InternalError, Lang.T(
+                        "后台箭头未能在 5 秒内显示。",
+                        "The background arrow did not appear within 5 seconds."), command.Json);
                 }
 
                 if (!NativeMethods.GetExitCodeProcess(process.hProcess, out var code)) throw new Win32Exception();
-                var error = "后台箭头在显示前退出。";
+                var error = Lang.T(
+                    "后台箭头在显示前退出。", "The background arrow exited before it appeared.");
                 var failedReport = File.ReadAllText(resultPath, Encoding.UTF8);
                 if (failedReport.Length > 0)
                 {
@@ -171,9 +177,15 @@ internal static class Program
             if (!command.Json)
             {
                 var notices = IneffectiveNotice(command);
-                if (notices.Length > 0) Err("以下参数暂不生效：" + string.Join("、", notices));
+                if (notices.Length > 0)
+                {
+                    Err(Lang.T("以下参数暂不生效：", "These arguments have no effect yet: ")
+                        + string.Join(Lang.T("、", ", "), notices));
+                }
             }
-            Out(command.Json ? report : $"箭头已显示（PID {process.dwProcessId}）。");
+            Out(command.Json
+                ? report
+                : Lang.T($"箭头已显示（PID {process.dwProcessId}）。", $"Arrow shown (PID {process.dwProcessId})."));
             return ExitCode.Ok;
         }
         finally
@@ -206,8 +218,10 @@ internal static class Program
     {
         if (MonitorService.IsSecureOrLockedDesktop())
         {
-            return Fail(ExitCode.PermissionMissing,
-                "当前处于锁屏或 UAC 安全桌面，无法在屏幕最上层绘制覆盖层。", command.Json);
+            return Fail(ExitCode.PermissionMissing, Lang.T(
+                "当前处于锁屏或 UAC 安全桌面，无法在屏幕最上层绘制覆盖层。",
+                "The desktop is locked or a UAC secure desktop is up, so the overlay cannot be drawn on top. "
+                + "Unlock the screen and retry."), command.Json);
         }
 
         using var manager = new OverlayManager();
@@ -217,7 +231,10 @@ internal static class Program
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
         {
-            return Fail(ExitCode.BadInput, $"显示器序号 {command.Target.DisplayIndex} 不存在（共 {manager.Monitors.Count} 块，从 1 开始）", command.Json);
+            return Fail(ExitCode.BadInput, Lang.T(
+                $"显示器序号 {command.Target.DisplayIndex} 不存在（共 {manager.Monitors.Count} 块，从 1 开始）",
+                $"Display {command.Target.DisplayIndex} does not exist "
+                + $"({manager.Monitors.Count} in total, numbered from 1). Run agentpointer doctor."), command.Json);
         }
 
         // --logical：把 at/rect 从 96 DPI 逻辑坐标换算成全局物理像素（上游 macOS 的 point 语义）。
@@ -248,16 +265,23 @@ internal static class Program
         var monitorForTarget = manager.MonitorFor(global);
         if (display is { } selected && monitorForTarget.Index != selected)
         {
-            throw new TargetNotFoundException($"目标不在显示器 #{selected + 1} 内。");
+            throw new TargetNotFoundException(Lang.T(
+                $"目标不在显示器 #{selected + 1} 内。",
+                $"The target is not on display #{selected + 1}."));
         }
 
         if (command.DryRun)
         {
-            return Report(command, global, "dry-run：本来会指向这里", monitorForTarget.Index + 1);
+            return Report(command, global,
+                Lang.T("dry-run：本来会指向这里", "dry-run: would point here"), monitorForTarget.Index + 1);
         }
 
         var notices = IneffectiveNotice(command);
-        if (!command.Json && notices.Length > 0) Err("以下参数暂不生效：" + string.Join("、", notices));
+        if (!command.Json && notices.Length > 0)
+        {
+            Err(Lang.T("以下参数暂不生效：", "These arguments have no effect yet: ")
+                + string.Join(Lang.T("、", ", "), notices));
+        }
 
         var sign = new SignContent(command.Text, SafeParseColor(command.Look.Color));
         var values = AgentPointer.Core.Rendering.SignText.Values(sign.RenderText);
@@ -392,17 +416,23 @@ internal static class Program
 
         if (command.Look.Shape is "zigzag" or "spiral")
         {
-            notices.Add($"--shape {command.Look.Shape}（尚未实现，当前按 bend 渲染）");
+            notices.Add(Lang.T(
+                $"--shape {command.Look.Shape}（尚未实现，当前按 bend 渲染）",
+                $"--shape {command.Look.Shape} (not implemented yet, renders as bend)"));
         }
 
         if (command.Look.Style is "ring" or "box")
         {
-            notices.Add($"--style {command.Look.Style}（尚未实现，当前按 arrow 渲染）");
+            notices.Add(Lang.T(
+                $"--style {command.Look.Style}（尚未实现，当前按 arrow 渲染）",
+                $"--style {command.Look.Style} (not implemented yet, renders as arrow)"));
         }
 
         if (command.Look.Anchor is { } anchor && anchor != "center" && anchor != "title")
         {
-            notices.Add($"--anchor {anchor}（当前按 center 定位）");
+            notices.Add(Lang.T(
+                $"--anchor {anchor}（当前按 center 定位）",
+                $"--anchor {anchor} (positions as center for now)"));
         }
 
         return notices.Distinct().ToArray();
@@ -432,7 +462,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            if (!json) Err($"任务栏闪烁失败：{ex.Message}");
+            if (!json) Err(Lang.T(
+                $"任务栏闪烁失败：{ex.Message}", $"Flashing the taskbar button failed: {ex.Message}"));
         }
     }
 
@@ -499,7 +530,8 @@ internal static class Program
             case TargetKind.Mouse:
                 if (!NativeMethods.GetCursorPos(out var cursor))
                 {
-                    throw new TargetNotFoundException("取不到当前鼠标位置");
+                    throw new TargetNotFoundException(Lang.T(
+                        "取不到当前鼠标位置", "Could not read the current mouse position."));
                 }
 
                 targetRect = new Rectangle(new Point(cursor.X, cursor.Y), new Size(1, 1));
@@ -515,9 +547,13 @@ internal static class Program
             case TargetKind.Window:
             {
                 var match = WindowFinder.Find(target.WindowQuery!)
-                          ?? throw new TargetNotFoundException(
+                          ?? throw new TargetNotFoundException(Lang.T(
                               $"找不到与 '{target.WindowQuery}' 匹配的窗口。"
-                              + $"当前可见的进程：{DescribeVisibleProcesses()}");
+                              + $"当前可见的进程：{DescribeVisibleProcesses()}。"
+                              + "用 agentpointer elements --app <名字> 查看窗口里可匹配的元素。",
+                              $"No window matches '{target.WindowQuery}'. "
+                              + $"Visible processes: {DescribeVisibleProcesses()}. "
+                              + "Use agentpointer elements --app <name> to list what a window exposes."));
                 if (command.Behavior.Raise && !command.DryRun)
                 {
                     // 置前失败不算致命——指着一个被挡住的窗口很难用，但不能因此让命令失败
@@ -571,7 +607,7 @@ internal static class Program
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)) is { Length: > 0 } list
             ? list
-            : "（无可见窗口）";
+            : Lang.T("（无可见窗口）", "(no visible windows)");
 
     /// <summary>--display N 是 1-based（与上游一致），内部数组下标从 0 开始。</summary>
     private static int? ToZeroBased(int? display) => display is { } d ? d - 1 : null;
@@ -580,7 +616,8 @@ internal static class Program
     private static MonitorInfo PrimaryMonitor(IReadOnlyList<MonitorInfo> monitors)
     {
         var primary = monitors.FirstOrDefault(m => m.Bounds.Contains(0, 0)) ?? monitors.FirstOrDefault();
-        return primary ?? throw new TargetNotFoundException("没有可用的显示器。");
+        return primary ?? throw new TargetNotFoundException(Lang.T(
+            "没有可用的显示器。", "No usable display."));
     }
 
     // ---------------- stop ----------------
@@ -620,7 +657,7 @@ internal static class Program
         }
         else if (!signalled && !command.StopHook)
         {
-            Err("没有正在显示的箭头");
+            Err(Lang.T("没有正在显示的箭头", "No arrow is on screen"));
         }
 
         return ExitCode.Ok;
@@ -775,23 +812,44 @@ internal static class Program
     {
         if (probe.Error is not null)
         {
-            return $"覆盖层自检失败：{probe.Error}";
+            return Lang.T($"覆盖层自检失败：{probe.Error}", $"Overlay probe failed: {probe.Error}");
         }
+
+        var hitTests = string.Join(", ", probe.HitTestResults.Select(r => $"{r.Label}({r.X},{r.Y})"));
 
         var lines = new List<string>
         {
-            $"覆盖层自检（显示器 #{probe.MonitorIndex}）",
-            $"  窗口区域  {probe.WindowRect.X},{probe.WindowRect.Y} " +
-            $"{probe.WindowRect.Width}x{probe.WindowRect.Height}（只覆盖内容包围盒）",
-            $"  原始 EXSTYLE  0x{probe.RawExStyle:X}",
-            $"  扩展样式  LAYERED={probe.StyleLayered}  TOOLWINDOW={probe.StyleToolWindow}  " +
-            $"NOACTIVATE={probe.StyleNoActivate}  TRANSPARENT={probe.StyleTransparent}",
-            $"  命中测试  {string.Join(", ", probe.HitTestResults.Select(r => $"{r.Label}({r.X},{r.Y})→{r.HitTest}"))}",
-            $"  样式与命中测试  {(probe.ConfigurationValid ? "通过" : "失败")}",
-            $"  可点区域  LAYERED={probe.StyleLayered}  NOACTIVATE={probe.StyleNoActivate}  " +
-            "牌子→HTCLIENT、目标→HTTRANSPARENT（点牌子收场，点目标照常送达）",
-            "  跨进程点击送达  未测试；需要点击被箭头覆盖的测试按钮确认。",
+            Lang.T(
+                $"覆盖层自检（显示器 #{probe.MonitorIndex}）",
+                $"Overlay probe (display #{probe.MonitorIndex})"),
+            Lang.T(
+                $"  窗口区域  {probe.WindowRect.X},{probe.WindowRect.Y} " +
+                $"{probe.WindowRect.Width}x{probe.WindowRect.Height}（只覆盖内容包围盒）",
+                $"  window rect  {probe.WindowRect.X},{probe.WindowRect.Y} " +
+                $"{probe.WindowRect.Width}x{probe.WindowRect.Height} (content bounds only)"),
+            Lang.T($"  原始 EXSTYLE  0x{probe.RawExStyle:X}", $"  raw EXSTYLE  0x{probe.RawExStyle:X}"),
+            Lang.T(
+                $"  扩展样式  LAYERED={probe.StyleLayered}  TOOLWINDOW={probe.StyleToolWindow}  " +
+                $"NOACTIVATE={probe.StyleNoActivate}  TRANSPARENT={probe.StyleTransparent}",
+                $"  extended styles  LAYERED={probe.StyleLayered}  TOOLWINDOW={probe.StyleToolWindow}  " +
+                $"NOACTIVATE={probe.StyleNoActivate}  TRANSPARENT={probe.StyleTransparent}"),
+            Lang.T(
+                $"  命中测试  {string.Join(", ", probe.HitTestResults.Select(r => $"{r.Label}({r.X},{r.Y})→{r.HitTest}"))}",
+                $"  hit test  {string.Join(", ", probe.HitTestResults.Select(r => $"{r.Label}({r.X},{r.Y})->{r.HitTest}"))}"),
+            Lang.T(
+                $"  样式与命中测试  {(probe.ConfigurationValid ? "通过" : "失败")}",
+                $"  styles and hit test  {(probe.ConfigurationValid ? "pass" : "fail")}"),
+            Lang.T(
+                $"  可点区域  LAYERED={probe.StyleLayered}  NOACTIVATE={probe.StyleNoActivate}  " +
+                "牌子→HTCLIENT、目标→HTTRANSPARENT（点牌子收场，点目标照常送达）",
+                $"  clickable area  LAYERED={probe.StyleLayered}  NOACTIVATE={probe.StyleNoActivate}  " +
+                "sign -> HTCLIENT, target -> HTTRANSPARENT (a click on the sign dismisses, the target stays clickable)"),
+            Lang.T(
+                "  跨进程点击送达  未测试；需要点击被箭头覆盖的测试按钮确认。",
+                "  cross-process click delivery  not tested; click a test button covered by the arrow to confirm."),
         };
+
+        _ = hitTests;
 
         return string.Join("\n", lines);
     }
@@ -867,8 +925,10 @@ internal static class Program
         if (elements.Count == 0)
         {
             Err(all.Count == 0
-                ? $"窗口 \"{window.Title}\" 没有暴露可访问性元素。"
-                : "没有匹配的元素。");
+                ? Lang.T(
+                    $"窗口 \"{window.Title}\" 没有暴露可访问性元素。",
+                    $"Window \"{window.Title}\" exposes no accessible elements.")
+                : Lang.T("没有匹配的元素。", "No element matches."));
             return ExitCode.Ok;
         }
 
@@ -891,14 +951,19 @@ internal static class Program
         if (!string.IsNullOrWhiteSpace(query))
         {
             return WindowFinder.Find(query!)
-                ?? throw new TargetNotFoundException(
-                    $"找不到与 '{query}' 匹配的窗口。当前可见的进程：{DescribeVisibleProcesses()}");
+                ?? throw new TargetNotFoundException(Lang.T(
+                    $"找不到与 '{query}' 匹配的窗口。当前可见的进程：{DescribeVisibleProcesses()}。"
+                    + "用 agentpointer elements --app <名字> 查看可匹配的元素。",
+                    $"No window matches '{query}'. Visible processes: {DescribeVisibleProcesses()}. "
+                    + "Use agentpointer elements --app <name> to list what a window exposes."));
         }
 
         var foreground = NativeMethods.GetForegroundWindow();
         if (foreground == IntPtr.Zero)
         {
-            throw new TargetNotFoundException("取不到前台窗口，请用 --app / --window 指定窗口。");
+            throw new TargetNotFoundException(Lang.T(
+                "取不到前台窗口，请用 --app / --window 指定窗口。",
+                "Could not read the foreground window; pass --app / --window."));
         }
 
         // 前台窗口若在枚举列表里，就能带上进程名和标题；否则退化成只有一个句柄
@@ -933,7 +998,9 @@ internal static class Program
     {
         if (!command.Json)
         {
-            Out($"{what}：({target.X}, {target.Y})，显示器 #{monitorIndex}");
+            Out(Lang.T(
+                $"{what}：({target.X}, {target.Y})，显示器 #{monitorIndex}",
+                $"{what}: ({target.X}, {target.Y}), display #{monitorIndex}"));
             return ExitCode.Ok;
         }
 
