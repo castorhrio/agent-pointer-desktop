@@ -12,6 +12,7 @@ using AgentPointer.Core;
 using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 using AgentPointer.Core.Rendering;
+using AgentPointer.Core.Targeting;
 
 namespace AgentPointer.Cli;
 
@@ -61,12 +62,6 @@ internal static class Program
 
         try
         {
-            if (command.Kind == CommandKind.Elements || command.Target.Kind == TargetKind.Element)
-            {
-                return Fail(ExitCode.Unsupported,
-                    "Windows 版暂不支持 elements / --element（UI Automation）。请用 --window、--rect 或 --at。", command.Json);
-            }
-
             if (command.KeepAlive && (command.Kind != CommandKind.Start || ShownSignal.EventName is null))
             {
                 return Fail(ExitCode.BadInput, "--keep-alive 是后台启动的内部参数。", command.Json);
@@ -75,6 +70,7 @@ internal static class Program
             return command.Kind switch
             {
                 CommandKind.Doctor => RunDoctor(command),
+                CommandKind.Elements => RunElements(command),
                 CommandKind.Stop => RunStop(command),
                 CommandKind.Start when !command.KeepAlive && !command.DryRun => RunStart(command, args),
                 CommandKind.Point or CommandKind.Start => RunPoint(command),
@@ -215,7 +211,7 @@ internal static class Program
 
         using var manager = new OverlayManager();
 
-        var target = ResolveTarget(manager, command);
+        var target = ResolveTarget(manager, command, out var element);
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -261,6 +257,7 @@ internal static class Program
                 started = true,
                 pid = Environment.ProcessId,
                 pointed = new { x = global.X, y = global.Y },
+                element = ElementJson(element),
                 text = sign.DisplayText,
                 monitor = monitorForTarget.Index + 1,
                 ineffective = notices,
@@ -306,6 +303,7 @@ internal static class Program
             {
                 ok = true,
                 pointed = new { x = global.X, y = global.Y },
+                element = ElementJson(element),
                 monitor = monitorForTarget.Index + 1,
                 endedBy = reason.ToString().ToLowerInvariant(),
                 text = sign.DisplayText,
@@ -360,9 +358,15 @@ internal static class Program
         form.ForceFinishFade();
     }
 
-    /// <summary>把命令里的目标解析成一个全局物理像素坐标。</summary>
-    private static Point ResolveTarget(OverlayManager manager, PointerCommand command)
+    /// <summary>
+    /// 把命令里的目标解析成一个全局物理像素坐标。
+    ///
+    /// <para><paramref name="element"/> 只在 <c>--element</c> 目标时非空，
+    /// 供 --json 回显命中的元素。</para>
+    /// </summary>
+    private static Point ResolveTarget(OverlayManager manager, PointerCommand command, out ElementInfo? element)
     {
+        element = null;
         var target = command.Target;
 
         switch (target.Kind)
@@ -409,7 +413,21 @@ internal static class Program
             }
 
             case TargetKind.Element:
-                throw new InvalidOperationException("元素定位应在分派命令前被拒绝。");
+            {
+                var window = ResolveElementWindow(command);
+
+                // 与窗口目标一致：只在显式 --raise 时置前，置前失败不算致命
+                if (command.Behavior.Raise && !command.DryRun)
+                {
+                    WindowFinder.TryRaise(window.Handle);
+                }
+
+                element = ElementFinder.Find(window.Handle, target.ElementQuery!, target.Role, window.Title);
+
+                // 元素包围盒走与 --rect 完全相同的渲染路径（取中心）
+                var bounds = new Rectangle(element.X, element.Y, element.Width, element.Height);
+                return new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+            }
 
             default:
                 throw new TargetNotFoundException("没有可用的目标");
@@ -615,6 +633,112 @@ internal static class Program
         bool ConfigurationValid,
         string ClickDelivery = "not-tested",
         string? Error = null);
+
+    // ---------------- elements ----------------
+
+    /// <summary>列出窗口里可被 <c>--element</c> 匹配的元素，让 agent 自己修正查询串。</summary>
+    private static int RunElements(PointerCommand command)
+    {
+        var window = ResolveElementWindow(command);
+
+        if (command.Behavior.Raise && !command.DryRun)
+        {
+            WindowFinder.TryRaise(window.Handle);
+        }
+
+        var all = ElementFinder.Collect(window.Handle);
+
+        var roleFilter = string.IsNullOrWhiteSpace(command.Target.Role)
+            ? null
+            : ElementMatcher.NormalizeRole(command.Target.Role);
+        var match = command.ElementsMatch?.Trim();
+
+        var elements = all
+            .Where(e => roleFilter is null ||
+                        string.Equals(ElementMatcher.NormalizeRole(e.Role), roleFilter, StringComparison.Ordinal))
+            .Where(e => string.IsNullOrEmpty(match) ||
+                        e.Name.Contains(match, StringComparison.OrdinalIgnoreCase) ||
+                        (e.AutomationId?.Contains(match, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+
+        if (command.Json)
+        {
+            Out(JsonSerializer.Serialize(new
+            {
+                ok = true,
+                window = new { title = window.Title, process = window.ProcessName },
+                count = elements.Count,
+                elements = elements.Select(e => new
+                {
+                    name = e.Name,
+                    role = e.Role,
+                    automationId = e.AutomationId,
+                    x = e.X,
+                    y = e.Y,
+                    width = e.Width,
+                    height = e.Height,
+                    enabled = e.Enabled,
+                }),
+            }, JsonOptions));
+
+            return ExitCode.Ok;
+        }
+
+        if (elements.Count == 0)
+        {
+            Err(all.Count == 0
+                ? $"窗口 \"{window.Title}\" 没有暴露可访问性元素。"
+                : "没有匹配的元素。");
+            return ExitCode.Ok;
+        }
+
+        foreach (var e in elements)
+        {
+            Out($"{e.Role,-12} \"{e.Name}\"  {e.X},{e.Y},{e.Width},{e.Height}");
+        }
+
+        return ExitCode.Ok;
+    }
+
+    /// <summary>
+    /// 元素目标的窗口作用域：给了 <c>--app</c> / <c>--window</c> 就按它找
+    /// （找不到即退出码 3），否则退回当前前台窗口。
+    /// </summary>
+    private static WindowMatch ResolveElementWindow(PointerCommand command)
+    {
+        var query = command.Target.WindowQuery;
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            return WindowFinder.Find(query!)
+                ?? throw new TargetNotFoundException(
+                    $"找不到与 '{query}' 匹配的窗口。当前可见的进程：{DescribeVisibleProcesses()}");
+        }
+
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            throw new TargetNotFoundException("取不到前台窗口，请用 --app / --window 指定窗口。");
+        }
+
+        // 前台窗口若在枚举列表里，就能带上进程名和标题；否则退化成只有一个句柄
+        return WindowFinder.Enumerate().FirstOrDefault(w => w.Handle == foreground)
+               ?? new WindowMatch(foreground, null, string.Empty, Rectangle.Empty);
+    }
+
+    /// <summary>--json 里回显命中的元素；非元素目标时为 null，会被序列化器略过。</summary>
+    private static object? ElementJson(ElementInfo? element) => element is null
+        ? null
+        : new
+        {
+            name = element.Name,
+            role = element.Role,
+            automationId = element.AutomationId,
+            x = element.X,
+            y = element.Y,
+            width = element.Width,
+            height = element.Height,
+        };
 
     // ---------------- 输出 ----------------
 

@@ -219,9 +219,15 @@ public static class ArgParser
             return ParseResult.BadInput(targetResult.Error);
         }
 
-        if (flags.ContainsKey("--role") && !flags.ContainsKey("--element"))
+        // elements 的 --role 是列表过滤器，不是"元素 + 作用域"语法，所以单独接住
+        var target = kind == CommandKind.Elements && flags.TryGetValue("--role", out var elementsRole)
+            ? targetResult.Target with { Role = elementsRole }
+            : targetResult.Target;
+
+        if (flags.ContainsKey("--role") && !flags.ContainsKey("--element")
+            && kind is CommandKind.Point or CommandKind.Start)
         {
-            return ParseResult.BadInput("--role 需要配合 --element 使用；Windows 版暂不支持元素定位。");
+            return ParseResult.BadInput("--role 需要配合 --element 使用。");
         }
 
         // point / start 必须有目标，否则 agent 无从知道指哪
@@ -257,7 +263,7 @@ public static class ArgParser
         {
             Kind = kind,
             Text = text,
-            Target = targetResult.Target,
+            Target = target,
             Duration = duration,
             Json = switches.Contains("--json"),
             DryRun = switches.Contains("--dry-run"),
@@ -531,6 +537,7 @@ public static class ArgParser
           start          后台显示箭头，上屏后返回（默认 300 秒，0 = 不限时）
           stop           移除同 owner 的箭头；无 owner 时只清未归属箭头
                          --all 清当前 Windows 会话全部；--hook 需要 owner，空操作时静默
+          elements       列出窗口里可被 --element 匹配的元素，可用 --app/--window、--role、--match 过滤
           doctor         版本、显示器、DPI、窗口样式与命中测试（不证明点击送达）
           install-skill  安装到 ~/.claude/skills/agentpointer 与 ~/.agents/skills/agentpointer
 
@@ -540,6 +547,9 @@ public static class ArgParser
           --mouse                当前鼠标位置
           --window App[:title]   按进程名 + 可选窗口标题定位，默认不抢焦点
           --app App[:title]      同 --window
+          --element <label>      UI Automation 元素名，需配合 --app/--window（缺省用前台窗口）；
+                                 命中后按元素包围盒绘制
+          --role <type>          限定 --element 或 elements 的元素类型（button / menuitem / edit ...）
           --anchor center|title  窗口锚点
           --display N            从 1 开始，编号见 doctor；at/rect 使用屏内局部像素，
                                  window/mouse 作为显示器过滤条件
@@ -564,11 +574,14 @@ public static class ArgParser
           --help --version
 
         尚不支持：
-          elements / --element / --role 返回退出码 5；请使用窗口或物理像素定位
           --follow --until-click --until-any-click --close-button --say --voice --png
           --style ring|box、--shape zigzag|spiral、其他 anchor 及 edge/close 颜色参数
           上述外观/行为兼容参数会给出未生效提示，--json 中见 ineffective
           --peekaboo / --snapshot 是 macOS 专属，返回退出码 2
+
+        示例：
+          agentpointer point --app notepad --element "File" --role menuitem --text "点这里"
+          agentpointer elements --app notepad --match "file" --json
 
         退出码：0 成功  2 参数错误  3 目标未找到  4 权限/桌面不可用  5 功能未支持  6 内部错误
 

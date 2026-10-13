@@ -137,9 +137,17 @@ The default label when `--text` is omitted only identifies a location; it cannot
 | `stop --hook` | Require an owner environment variable and clear that owner's overlays; quiet if none exist |
 | `doctor` | Report displays, DPI, desktop availability, overlay styles, and hit testing |
 | `install-skill` | Install skill files for both agents |
-| `elements` | Currently unsupported; exit code 5 |
+| `elements` | List the elements a window exposes to `--element`, filtered by `--role` and `--match` |
 
 Targets are mutually exclusive: `--at X,Y`, `--rect X,Y,W,H`, `--mouse`, or `--window App[:title]`.
+`--element <label>` targets a UI Automation element inside `--app` / `--window` (or the foreground
+window when neither is given), by label plus an optional `--role`, and draws on the element's bounding box
+through the same path as `--rect`. JSON results echo the matched element. `elements` lists what is available:
+
+```powershell
+agentpointer point --app notepad --element "File" --role menuitem --text "Click File to continue"
+agentpointer elements --app notepad --match "file" --json
+```
 `--app` is an alias for `--window`. Windows are matched by process name. By default, matching preserves focus;
 `--raise` explicitly requests foreground activation, and `--no-raise` takes precedence.
 `--dry-run` draws nothing and never changes focus.
@@ -188,7 +196,9 @@ Background startup has a 5-second limit; failure cleans up the child and returns
 
 Some option names, defaults, and visual rules follow bigarrow. Compatibility is partial:
 
-- `elements` / `--element` are not yet connected to Windows UI Automation.
+- `--element` matches UI Automation elements by label (plus optional `--role`); `elements` lists what a
+  window exposes. Native apps and window chrome work as-is; browser page content needs Chrome or another
+  browser started with accessibility enabled (`--force-renderer-accessibility`).
 - `--follow`, `--until-click`, `--until-any-click`, `--close-button`, `--say`, `--voice`,
   `--png`, and edge/close color options are parsed only. JSON lists them in `ineffective`; text output warns about them.
 - `ring` / `box` fall back to `arrow`, and `zigzag` / `spiral` fall back to `bend`. Window anchors currently support only `center` / `title`.
