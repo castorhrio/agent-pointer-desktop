@@ -44,6 +44,16 @@ public static class LogicalCoordinates
     public static double Normalize(double scale) =>
         double.IsFinite(scale) && scale > 0 ? scale : 1d;
 
+    /// <summary>
+    /// 显示器<strong>局部</strong>物理像素矩形 → <strong>全局</strong>物理像素矩形：
+    /// 左上角加显示器原点，宽高不变（不是在换算 DPI，纯平移）。
+    ///
+    /// <para><c>--rect</c> 配合 <c>--display</c> 时必须整块平移：只换算中心点的话，
+    /// <c>--until-click</c> 拿到的还是显示器局部坐标，会去盯屏幕角落里的一个不存在的矩形。</para>
+    /// </summary>
+    public static Rectangle ToGlobal(Rectangle local, Point monitorOrigin) =>
+        new(local.X + monitorOrigin.X, local.Y + monitorOrigin.Y, local.Width, local.Height);
+
     private static int Scale(int value, double scale) =>
         (int)Math.Round(value * scale, MidpointRounding.AwayFromZero);
 }

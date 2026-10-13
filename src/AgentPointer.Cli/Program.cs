@@ -259,9 +259,17 @@ internal static class Program
 
         // 只有输入坐标需要从显示器局部换算；窗口和鼠标已经是全局坐标。
         // --logical 已经自己算成全局物理像素，不能再按 --display 翻译第二次。
-        manager.TryToGlobal(
-            !command.Target.Logical && command.Target.Kind is TargetKind.At or TargetKind.Rect ? display : null,
-            target, out var global);
+        var localDisplay = !command.Target.Logical && command.Target.Kind is TargetKind.At or TargetKind.Rect
+            ? display
+            : null;
+        manager.TryToGlobal(localDisplay, target, out var global);
+
+        // --rect 的整块矩形都要平移，不能只平移中心点：--until-click 是拿 targetRect
+        // 去比对点击坐标的，只平移中心等于让它去盯屏幕角落里的一个不存在的矩形。
+        if (localDisplay is { } localIndex && command.Target.Kind == TargetKind.Rect)
+        {
+            targetRect = LogicalCoordinates.ToGlobal(targetRect, manager.Monitors[localIndex].Bounds.Location);
+        }
         var monitorForTarget = manager.MonitorFor(global);
         if (display is { } selected && monitorForTarget.Index != selected)
         {
@@ -308,105 +316,112 @@ internal static class Program
                 () => dismissed = StopReason.TargetClicked);
         }
 
-        form.ShowPointer(global, monitorForTarget.Bounds, monitorForTarget.Dpi, sign, command);
-
-        // 常驻子进程上屏后立刻放行 start 父进程（--keep-alive 内部开关）
-        if (command.KeepAlive)
+        // 钩子一旦装上就必须拆掉：进程退出虽然会带走低层钩子，但异常路径跳过显式
+        // UnhookWindowsHookEx 之前，系统会一直回调一个已经不再需要它的箭头。
+        try
         {
-            var deadline = Environment.TickCount64 + PointerStyle.IntroMs + 1000;
-            while (form.IsEntering && Environment.TickCount64 < deadline)
+            form.ShowPointer(global, monitorForTarget.Bounds, monitorForTarget.Dpi, sign, command);
+
+            // 常驻子进程上屏后立刻放行 start 父进程（--keep-alive 内部开关）
+            if (command.KeepAlive)
             {
+                var deadline = Environment.TickCount64 + PointerStyle.IntroMs + 1000;
+                while (form.IsEntering && Environment.TickCount64 < deadline)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(10);
+                }
+
+                if (form.IsEntering) throw new InvalidOperationException("箭头入场动画未完成。");
+                Out(JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    started = true,
+                    pid = Environment.ProcessId,
+                    pointed = new { x = global.X, y = global.Y },
+                    element = ElementJson(element),
+                    text = sign.DisplayText,
+                    values = values.Count > 0 ? values : null,
+                    monitor = monitorForTarget.Index + 1,
+                    ineffective = notices,
+                }, JsonOptions));
+                ShownSignal.Signal();
+                Environment.SetEnvironmentVariable(ShownSignal.ResultEnvironmentVariable, null);
+            }
+
+            // 3) 注意力特性：念牌子（--say）、闪任务栏（--flash）、系统通知（--notify）。
+            //    全部在箭头已经上屏之后启动，任何一个失败都只写 stderr，不影响箭头本身。
+            using var speaker = command.Behavior.Say
+                ? SignSpeaker.Start(sign.DisplayText, command.Behavior.Voice, command.Json)
+                : null;
+
+            using var toast = command.Behavior.Notify
+                ? ToastNotifier.Show(sign.DisplayText, command.Json)
+                : null;
+
+            if (command.Behavior.Flash)
+            {
+                FlashTarget(targetWindow, command.Json);
+            }
+
+            // duration=0 表示不限时；缺省时由解析器按子命令填好默认值。
+            // 等待必须做成 30ms 轮询 + DoEvents：动画（入场/呼吸）由 WinForms Timer 驱动，
+            // 主线程死等会让 Timer 永不触发——箭头会停在入场的第一帧（全透明）。
+            var startedAt = Environment.TickCount64;
+            StopReason reason;
+            while (true)
+            {
+                if (dismissed is { } requested)
+                {
+                    reason = requested;
+                    break; // 牌子 / 箭杆 / × / 目标上的点击
+                }
+
+                reason = stop.Wait(StopReason.DurationElapsed, 0.03);
+
+                if (reason != StopReason.DurationElapsed)
+                {
+                    break; // stop 信号或 owner 进程退出
+                }
+
                 Application.DoEvents();
-                Thread.Sleep(10);
+
+                var elapsedSeconds = (Environment.TickCount64 - startedAt) / 1000d;
+                if (command.Duration > 0 && elapsedSeconds >= command.Duration)
+                {
+                    break;
+                }
             }
 
-            if (form.IsEntering) throw new InvalidOperationException("箭头入场动画未完成。");
-            Out(JsonSerializer.Serialize(new
+            if (!command.Behavior.NoAnimation)
             {
-                ok = true,
-                started = true,
-                pid = Environment.ProcessId,
-                pointed = new { x = global.X, y = global.Y },
-                element = ElementJson(element),
-                text = sign.DisplayText,
-                values = values.Count > 0 ? values : null,
-                monitor = monitorForTarget.Index + 1,
-                ineffective = notices,
-            }, JsonOptions));
-            ShownSignal.Signal();
-            Environment.SetEnvironmentVariable(ShownSignal.ResultEnvironmentVariable, null);
-        }
-
-        // 3) 注意力特性：念牌子（--say）、闪任务栏（--flash）、系统通知（--notify）。
-        //    全部在箭头已经上屏之后启动，任何一个失败都只写 stderr，不影响箭头本身。
-        using var speaker = command.Behavior.Say
-            ? SignSpeaker.Start(sign.DisplayText, command.Behavior.Voice, command.Json)
-            : null;
-
-        using var toast = command.Behavior.Notify
-            ? ToastNotifier.Show(sign.DisplayText, command.Json)
-            : null;
-
-        if (command.Behavior.Flash)
-        {
-            FlashTarget(targetWindow, command.Json);
-        }
-
-        // duration=0 表示不限时；缺省时由解析器按子命令填好默认值。
-        // 等待必须做成 30ms 轮询 + DoEvents：动画（入场/呼吸）由 WinForms Timer 驱动，
-        // 主线程死等会让 Timer 永不触发——箭头会停在入场的第一帧（全透明）。
-        var startedAt = Environment.TickCount64;
-        StopReason reason;
-        while (true)
-        {
-            if (dismissed is { } requested)
-            {
-                reason = requested;
-                break; // 牌子 / 箭杆 / × / 目标上的点击
+                form.BeginFadeOut(FadeDurationMs);
+                WaitForFade(form);
             }
 
-            reason = stop.Wait(StopReason.DurationElapsed, 0.03);
+            manager.HideAll();
 
-            if (reason != StopReason.DurationElapsed)
+            if (command.Json && !command.KeepAlive)
             {
-                break; // stop 信号或 owner 进程退出
+                Out(JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    pointed = new { x = global.X, y = global.Y },
+                    element = ElementJson(element),
+                    monitor = monitorForTarget.Index + 1,
+                    endedBy = ReasonName(reason),
+                    text = sign.DisplayText,
+                    values = values.Count > 0 ? values : null,
+                    ineffective = IneffectiveNotice(command),
+                }, JsonOptions));
             }
 
-            Application.DoEvents();
-
-            var elapsedSeconds = (Environment.TickCount64 - startedAt) / 1000d;
-            if (command.Duration > 0 && elapsedSeconds >= command.Duration)
-            {
-                break;
-            }
+            return ExitCode.Ok;
         }
-
-        watch?.Dispose();
-
-        if (!command.Behavior.NoAnimation)
+        finally
         {
-            form.BeginFadeOut(FadeDurationMs);
-            WaitForFade(form);
+            watch?.Dispose();
         }
-
-        manager.HideAll();
-
-        if (command.Json && !command.KeepAlive)
-        {
-            Out(JsonSerializer.Serialize(new
-            {
-                ok = true,
-                pointed = new { x = global.X, y = global.Y },
-                element = ElementJson(element),
-                monitor = monitorForTarget.Index + 1,
-                endedBy = ReasonName(reason),
-                text = sign.DisplayText,
-                values = values.Count > 0 ? values : null,
-                ineffective = IneffectiveNotice(command),
-            }, JsonOptions));
-        }
-
-        return ExitCode.Ok;
     }
 
     /// <summary>上游承诺 --json 标注"接受但未生效"的参数，不让 agent 静默踩空。</summary>

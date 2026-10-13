@@ -59,6 +59,23 @@ public class LogicalCoordinatesTests
     }
 
     [Fact]
+    public void 矩形整体平移到全局坐标()
+    {
+        // --rect 配 --display：整块矩形都要平移，--until-click 是拿整块矩形去比对点击的
+        var local = new Rectangle(10, 20, 100, 200);
+        Assert.Equal(new Rectangle(1930, 20, 100, 200),
+            LogicalCoordinates.ToGlobal(local, new Point(1920, 0)));
+    }
+
+    [Fact]
+    public void 负原点显示器的矩形也整体平移()
+    {
+        var local = new Rectangle(0, 0, 100, 100);
+        Assert.Equal(new Rectangle(-1920, -300, 100, 100),
+            LogicalCoordinates.ToGlobal(local, new Point(-1920, -300)));
+    }
+
+    [Fact]
     public void 退化矩形不会出现负宽高()
     {
         var monitor = new Rectangle(0, 0, 100, 100);

@@ -390,6 +390,67 @@ internal static class OverlayRenderer
     }
 
     /// <summary>
+    /// 量牌子的自然尺寸（逻辑像素，已含内边距、提示标题行和关闭按钮占位）。
+    ///
+    /// <para>必须走与绘制相同的 <see cref="BuildTextLayout"/>：直接对纯文本
+    /// <c>MeasureString</c> 量不到 <c>{{value}}</c> 芯片多出来的内边距、间隔和图标，
+    /// 量出来的卡片就装不下芯片，芯片会溢出或者被换行挤出去。</para>
+    ///
+    /// <para><paramref name="maxWidth"/> 是牌子允许的最大宽度（含内边距）。正文超过
+    /// <see cref="ArrowMetrics.MaximumLines"/> 行时返回的 <c>Truncated</c> 为 true，
+    /// 调用方据此缩小字号；高度已按行数封顶。</para>
+    /// </summary>
+    internal static (Size Size, bool Truncated) MeasureSignText(
+        Graphics g, string? text, float fontSize, bool closeButton, int maxWidth)
+    {
+        const float s = 1f;
+
+        var pad = PointerStyle.SignPadX * s;
+        var closeReserve = closeButton ? (CloseButtonDiameter + CloseButtonPadding * 2) * s : 0f;
+        var cardWidth = MathF.Max(80f, maxWidth);
+
+        // 用一块"宽度就是上限、高度足够长"的假牌子把正文排一遍，尺寸自然就出来了
+        var frame = new RenderFrame(
+            SignRect: new RectangleF(0, 0, cardWidth, 100_000f),
+            SignCenter: new PointF(cardWidth / 2f, 0f),
+            Target: new PointF(cardWidth / 2f, 1f),
+            Color: ArrowColor.Parse("red"),
+            SignFontSize: fontSize,
+            Text: text,
+            Look: new LookSpec(),
+            Metrics: ArrowMetrics.For(ArrowSize.Medium),
+            DpiScale: s,
+            AnimScale: 1d,
+            CloseButton: closeButton);
+
+        using var layout = BuildTextLayout(g, frame, s);
+        var area = SignTextArea(frame, s);
+
+        var contentWidth = 0f;
+        var bottom = area.Top;
+        var lineHeight = 0f;
+
+        foreach (var run in layout.Runs)
+        {
+            contentWidth = MathF.Max(contentWidth, run.Rect.Right - area.Left);
+            bottom = MathF.Max(bottom, run.Rect.Bottom);
+            lineHeight = MathF.Max(lineHeight, run.Rect.Height);
+        }
+
+        var lines = lineHeight > 0f
+            ? Math.Max(1, (int)Math.Round((bottom - area.Top) / lineHeight))
+            : 0;
+
+        var size = new Size(
+            (int)Math.Ceiling(contentWidth + pad * 2 + closeReserve),
+            (int)Math.Ceiling(
+                Math.Min(lines, ArrowMetrics.MaximumLines) * lineHeight
+                + PointerStyle.SignPadY * 2 + PointerStyle.SignHeaderHeight));
+
+        return (size, lines > ArrowMetrics.MaximumLines);
+    }
+
+    /// <summary>
     /// 牌子正文区：扣掉内边距、提示标题行和关闭按钮的占位。
     /// 绘制与命中判定都走这里，两边的矩形才不会错位。
     /// </summary>

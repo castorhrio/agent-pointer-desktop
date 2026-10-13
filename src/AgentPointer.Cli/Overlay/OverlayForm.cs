@@ -91,9 +91,21 @@ internal sealed class OverlayForm : Form
     /// <summary>✓ 的展示时长。上游语义：短暂反馈，箭头照旧留着。</summary>
     private const int CopyBadgeMs = 1500;
 
-    /// <summary>剪贴板可能被别的进程占着，短暂重试。</summary>
+    /// <summary>剪贴板可能被别的进程占着，用定时器重试。</summary>
     private const int ClipboardRetries = 5;
     private const int ClipboardRetryDelayMs = 50;
+
+    /// <summary>待复制芯片的序号；-1 表示没有待办。</summary>
+    private int _pendingCopyChip = -1;
+
+    /// <summary>当前这次复制已经试过几次。</summary>
+    private int _clipboardAttempts;
+
+    /// <summary>
+    /// 剪贴板重试计时器。用定时器而不是 <c>Thread.Sleep</c>：这个 UI 线程同时也是
+    /// <c>WH_MOUSE_LL</c> 的线程，阻塞超过 LowLevelHooksTimeout 系统会摘掉钩子。
+    /// </summary>
+    private readonly System.Windows.Forms.Timer _clipboardRetryTimer;
 
     /// <summary>复制成功的 ✓ 到点后自己变回复制图标。</summary>
     private readonly System.Windows.Forms.Timer _copyResetTimer;
@@ -128,6 +140,13 @@ internal sealed class OverlayForm : Form
 
         _hoverTimer = new System.Windows.Forms.Timer { Interval = HoverPollMs };
         _hoverTimer.Tick += (_, _) => PollHover();
+
+        _clipboardRetryTimer = new System.Windows.Forms.Timer { Interval = ClipboardRetryDelayMs };
+        _clipboardRetryTimer.Tick += (_, _) =>
+        {
+            _clipboardRetryTimer.Stop();
+            TryCopyPendingChip();
+        };
 
         _copyResetTimer = new System.Windows.Forms.Timer { Interval = CopyBadgeMs };
         _copyResetTimer.Tick += (_, _) =>
@@ -189,7 +208,7 @@ internal sealed class OverlayForm : Form
             // WS_EX_TRANSPARENT 才真正生效，这里只是同一线程内的补充。
             case Win32.WM_NCHITTEST:
             {
-                var hit = ClientPoint(m.LParam) is { } point ? HitAt(point) : OverlayHit.None;
+                var hit = ClientPoint(m.LParam, screen: true) is { } point ? HitAt(point) : OverlayHit.None;
                 m.Result = new IntPtr(hit == OverlayHit.None
                     ? NativeMethods.HTTRANSPARENT
                     : NativeMethods.HTCLIENT);
@@ -197,7 +216,7 @@ internal sealed class OverlayForm : Form
             }
 
             case NativeMethods.WM_MOUSEMOVE:
-                UpdateHover(ClientPoint(m.LParam));
+                UpdateHover(ClientPoint(m.LParam, screen: false));
                 m.Result = IntPtr.Zero;
                 return;
 
@@ -208,7 +227,7 @@ internal sealed class OverlayForm : Form
 
             case NativeMethods.WM_LBUTTONDOWN:
             {
-                if (ClientPoint(m.LParam) is { } down)
+                if (ClientPoint(m.LParam, screen: false) is { } down)
                 {
                     // 复制芯片：只复制，不收场（上游：点击复制，箭头留着）
                     if (OverlayRenderer.ChipAt(_hitRegions, new PointF(down.X, down.Y)) is { } chip)
@@ -240,14 +259,17 @@ internal sealed class OverlayForm : Form
         base.WndProc(ref m);
     }
 
-    /// <summary>鼠标消息的 LPARAM 是屏幕坐标，命中判定要的是客户区坐标。</summary>
-    private Point? ClientPoint(IntPtr lParam)
+    /// <summary>
+    /// 取鼠标消息的客户区坐标。<c>WM_NCHITTEST</c> 的 LPARAM 是<strong>屏幕</strong>坐标，
+    /// <c>WM_MOUSEMOVE</c> / <c>WM_LBUTTONDOWN</c> 的已经是<strong>客户区</strong>坐标
+    /// （见 <see cref="MessagePoint.ToClient"/>）。覆盖层窗口不在屏幕原点上，多减一次原点，
+    /// 牌子、箭杆、关闭按钮和复制芯片就会全部点不中，而点击仍然被吃掉。
+    /// </summary>
+    private Point? ClientPoint(IntPtr lParam, bool screen)
     {
         if (_hitRegions is null) return null;
 
-        var raw = lParam.ToInt64();
-        var screen = new Point(unchecked((short)(raw & 0xFFFF)), unchecked((short)((raw >> 16) & 0xFFFF)));
-        return PointToClient(screen);
+        return MessagePoint.ToClient(screen, unchecked((int)lParam.ToInt64()), Location);
     }
 
     private OverlayHit HitAt(Point client) =>
@@ -341,40 +363,59 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>
-    /// 把芯片的值放进剪贴板，并把那个芯片的图标换成 ✓（约 <see cref="CopyBadgeMs"/> 毫秒）。
-    /// 复制失败绝不收起箭头：剪贴板被别的进程占着时最多重试 5 次，仍失败就只留个调试记录。
+    /// 记下要复制的芯片并立刻试一次；失败交给 <see cref="_clipboardRetryTimer"/> 稍后重试。
     /// 运行在 UI（STA）线程上。
     /// </summary>
     private void CopyChipValue(int chip)
     {
         if (chip < 0 || chip >= _values.Length) return;
 
-        var value = _values[chip];
-        var copied = false;
+        _pendingCopyChip = chip;
+        _clipboardAttempts = 0;
+        TryCopyPendingChip();
+    }
 
-        for (var attempt = 0; attempt < ClipboardRetries && !copied; attempt++)
+    /// <summary>
+    /// 试着把待复制的值放进剪贴板，成功就把那个芯片的图标换成 ✓（约 <see cref="CopyBadgeMs"/> 毫秒）。
+    ///
+    /// <para><strong>这里绝不能 <c>Thread.Sleep</c></strong>：这个 UI 线程同时是
+    /// <c>WH_MOUSE_LL</c> 的线程，阻塞超过 LowLevelHooksTimeout（缺省 300ms）系统会直接摘掉钩子，
+    /// <c>--until-click</c> 之后整支箭都不再响应，鼠标也会短暂卡住。所以每次 Tick 只试一次。</para>
+    ///
+    /// <para>失败绝不收起箭头：剪贴板被别的进程占着时最多重试 <see cref="ClipboardRetries"/> 次，
+    /// 仍失败就只留个调试记录。</para>
+    /// </summary>
+    private void TryCopyPendingChip()
+    {
+        var chip = _pendingCopyChip;
+        if (chip < 0 || chip >= _values.Length)
         {
-            try
-            {
-                Clipboard.SetText(value);
-                copied = true;
-            }
-            catch (System.Runtime.InteropServices.ExternalException)
-            {
-                Thread.Sleep(ClipboardRetryDelayMs);
-            }
-            catch (System.Threading.ThreadStateException)
-            {
-                Thread.Sleep(ClipboardRetryDelayMs);
-            }
-        }
-
-        if (!copied)
-        {
-            System.Diagnostics.Debug.WriteLine($"agentpointer: 剪贴板被占用，未能复制芯片 #{chip} 的值。");
+            _pendingCopyChip = -1;
             return;
         }
 
+        try
+        {
+            Clipboard.SetText(_values[chip]);
+        }
+        catch (Exception ex) when (ex is ExternalException
+                                   or COMException
+                                   or System.Threading.ThreadStateException)
+        {
+            // COMException 与 ExternalException 同源（剪贴板被别的进程锁着），一并重试
+            if (++_clipboardAttempts >= ClipboardRetries)
+            {
+                _pendingCopyChip = -1;
+                System.Diagnostics.Debug.WriteLine($"agentpointer: 剪贴板被占用，未能复制芯片 #{chip} 的值。");
+                return;
+            }
+
+            _clipboardRetryTimer.Stop();
+            _clipboardRetryTimer.Start();
+            return;
+        }
+
+        _pendingCopyChip = -1;
         _copiedChip = chip;
         _copyResetTimer.Stop();
         _copyResetTimer.Start();
@@ -529,39 +570,39 @@ internal sealed class OverlayForm : Form
         return clamped.Width > 8 && clamped.Height > 8 ? clamped : bounds;
     }
 
-    /// <summary>量说明卡片尺寸（逻辑像素），包含提示标题和最多三行正文。</summary>
+    /// <summary>
+    /// 量说明卡片尺寸（逻辑像素），包含提示标题、关闭按钮占位和最多
+    /// <see cref="ArrowMetrics.MaximumLines"/> 行正文。
+    ///
+    /// <para>量的是<b>绘制时真正用的那一遍排版</b>（<see cref="OverlayRenderer.MeasureSignText"/>）：
+    /// 直接量纯文本的话，<c>{{value}}</c> 复制芯片多出来的内边距、间隔和图标都不在账上，
+    /// 芯片会溢出卡片。</para>
+    /// </summary>
     private (Size Sign, float FontSize) MeasureSign(ArrowMetrics metrics, Rectangle monitorBounds)
     {
         using var probe = new Bitmap(1, 1);
         using var g = Graphics.FromImage(probe);
         g.TextRenderingHint = TextRenderingHint.AntiAlias;
 
-        var dpiFactor = (float)(g.DpiX / 96d);
         var maxWidth = (int)Math.Min(
             monitorBounds.Width * ArrowMetrics.MaximumSignWidthShare / _scale,
             PointerStyle.SignMaxWidth);
 
-        var text = _sign!.DisplayText;
-        var preferCjk = OverlayRenderer.HasCjk(text);
+        // 量的是牌子实际绘制的原文（保留 {{value}} 记号），芯片的额外宽度才算得进去
+        var text = _sign!.RenderText;
+        var closeButton = _command?.Behavior.CloseButton == true;
 
         // 长文优先缩小字号，达到下限后按三行省略，避免卡片吞掉屏幕。
         var fontSize = metrics.FontSize;
         var minimumFontSize = Math.Min(PointerStyle.SignFontPx, fontSize);
-        Size measured = default;
+        var measured = default(Size);
 
         while (true)
         {
-            using var font = OverlayRenderer.ResolveFont(fontSize / dpiFactor, preferCjk);
-            var layoutWidth = (int)((maxWidth - PointerStyle.SignPadX * 2) * dpiFactor);
-            var size = g.MeasureString(text, font, layoutWidth);
-            var maximumHeight = font.GetHeight(g) / dpiFactor * ArrowMetrics.MaximumLines;
+            (measured, var truncated) =
+                OverlayRenderer.MeasureSignText(g, text, fontSize, closeButton, maxWidth);
 
-            measured = new Size(
-                (int)Math.Ceiling(size.Width / dpiFactor) + (int)Math.Ceiling(PointerStyle.SignPadX * 2),
-                (int)Math.Ceiling(Math.Min(size.Height / dpiFactor, maximumHeight))
-                + (int)Math.Ceiling(PointerStyle.SignPadY * 2 + PointerStyle.SignHeaderHeight));
-
-            if (size.Height / dpiFactor <= maximumHeight || fontSize <= minimumFontSize)
+            if (!truncated || fontSize <= minimumFontSize)
             {
                 break;
             }
@@ -569,12 +610,7 @@ internal sealed class OverlayForm : Form
             fontSize = MathF.Max(minimumFontSize, fontSize - 2);
         }
 
-        // --close-button 在牌子右端占位：不预留的话按钮会压在文字上
-        var closeReserve = _command?.Behavior.CloseButton == true
-            ? (int)Math.Ceiling(OverlayRenderer.CloseButtonDiameter + OverlayRenderer.CloseButtonPadding * 2)
-            : 0;
-
-        return (new Size(Math.Max(80, measured.Width + closeReserve), Math.Max(40, measured.Height)), fontSize);
+        return (new Size(Math.Max(80, measured.Width), Math.Max(40, measured.Height)), fontSize);
     }
 
     /// <summary>把布局、目标、外观打成一帧。<paramref name="animScale"/> 只影响呈现，不影响命中。</summary>
@@ -763,6 +799,10 @@ internal sealed class OverlayForm : Form
     {
         if (_fadingOut) return;
 
+        // 淡出之后不再受理复制：迟到的重试会把 Render 重新拉起来，把已经在收场的窗口叫回来
+        _clipboardRetryTimer.Stop();
+        _pendingCopyChip = -1;
+
         _fadingOut = true;
         _fadeFrom = Math.Max(0.01, _alpha);
         _fadeDurationMs = Math.Max(16, durationMs);
@@ -773,6 +813,8 @@ internal sealed class OverlayForm : Form
     public void HideNow()
     {
         StopHoverPoll();
+        _clipboardRetryTimer.Stop();
+        _pendingCopyChip = -1;
         _copyResetTimer.Stop();
         _copiedChip = null;
         EnterPhase(AnimPhase.Idle);
@@ -796,6 +838,8 @@ internal sealed class OverlayForm : Form
         if (!_fadingOut) return;
 
         StopHoverPoll();
+        _clipboardRetryTimer.Stop();
+        _pendingCopyChip = -1;
         _copyResetTimer.Stop();
         _copiedChip = null;
         EnterPhase(AnimPhase.Idle);
@@ -840,6 +884,8 @@ internal sealed class OverlayForm : Form
             _animTimer.Dispose();
             _hoverTimer.Stop();
             _hoverTimer.Dispose();
+            _clipboardRetryTimer.Stop();
+            _clipboardRetryTimer.Dispose();
             _copyResetTimer.Stop();
             _copyResetTimer.Dispose();
             _frameBuffer?.Dispose();
