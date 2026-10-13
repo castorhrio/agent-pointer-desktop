@@ -17,14 +17,8 @@ public static class SpeechText
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
 
-        var builder = new StringBuilder(text.Length);
-        foreach (var c in text)
-        {
-            if (c is '{' or '}') continue;
-            builder.Append(c);
-        }
-
-        return builder.ToString().Trim();
+        // 与牌子显示共用同一条规则，免得念出来的和看到的对不上
+        return SignText.PlainText(text).Trim();
     }
 
     /// <summary>

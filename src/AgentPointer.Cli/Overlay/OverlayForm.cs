@@ -11,9 +11,15 @@ namespace AgentPointer.Cli.Overlay;
 /// <summary>牌子上要画的东西。颜色用 <see cref="ArrowColor"/>（上游 Rec.709 语义）。</summary>
 public sealed record SignContent(string? Text, ArrowColor Color)
 {
-    public string DisplayText => !string.IsNullOrWhiteSpace(Text) ? Text.Trim()
+    /// <summary>牌子实际绘制的文字：保留 <c>{{value}}</c> 记号，渲染器据此分出复制芯片。</summary>
+    public string RenderText => !string.IsNullOrWhiteSpace(Text)
+        ? Text.Trim()
         : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh"
             ? "请查看箭头所指位置" : "Look at the indicated location";
+
+    /// <summary>给 JSON / 朗读 / 通知看的纯文本：复制记号的花括号已经去掉。</summary>
+    public string DisplayText =>
+        AgentPointer.Core.Rendering.SignText.PlainText(RenderText).Trim();
 }
 
 /// <summary>
@@ -76,6 +82,22 @@ internal sealed class OverlayForm : Form
     private OverlayHit _hover = OverlayHit.None;
     private double _hoverDim = 1.0;
 
+    /// <summary>牌子上 <c>{{value}}</c> 的值，按出现顺序；点第 n 个芯片就复制 <c>_values[n]</c>。</summary>
+    private string[] _values = Array.Empty<string>();
+
+    /// <summary>刚复制成功、正在显示 ✓ 的芯片序号。</summary>
+    private int? _copiedChip;
+
+    /// <summary>✓ 的展示时长。上游语义：短暂反馈，箭头照旧留着。</summary>
+    private const int CopyBadgeMs = 1500;
+
+    /// <summary>剪贴板可能被别的进程占着，短暂重试。</summary>
+    private const int ClipboardRetries = 5;
+    private const int ClipboardRetryDelayMs = 50;
+
+    /// <summary>复制成功的 ✓ 到点后自己变回复制图标。</summary>
+    private readonly System.Windows.Forms.Timer _copyResetTimer;
+
     /// <summary>
     /// 悬停轮询计时器。窗口默认全程带 <c>WS_EX_TRANSPARENT</c>（完全穿透），
     /// 只有指针进入可点区域时由它临时关掉穿透。
@@ -106,6 +128,14 @@ internal sealed class OverlayForm : Form
 
         _hoverTimer = new System.Windows.Forms.Timer { Interval = HoverPollMs };
         _hoverTimer.Tick += (_, _) => PollHover();
+
+        _copyResetTimer = new System.Windows.Forms.Timer { Interval = CopyBadgeMs };
+        _copyResetTimer.Tick += (_, _) =>
+        {
+            _copyResetTimer.Stop();
+            _copiedChip = null;
+            Render();
+        };
     }
 
     /// <summary>当前 DPI 比例。</summary>
@@ -178,9 +208,20 @@ internal sealed class OverlayForm : Form
 
             case NativeMethods.WM_LBUTTONDOWN:
             {
-                var hit = ClientPoint(m.LParam) is { } down ? HitAt(down) : OverlayHit.None;
-                if (hit == OverlayHit.Close) DismissRequested?.Invoke(StopReason.Closed);
-                else if (hit != OverlayHit.None) DismissRequested?.Invoke(StopReason.Clicked);
+                if (ClientPoint(m.LParam) is { } down)
+                {
+                    // 复制芯片：只复制，不收场（上游：点击复制，箭头留着）
+                    if (OverlayRenderer.ChipAt(_hitRegions, new PointF(down.X, down.Y)) is { } chip)
+                    {
+                        CopyChipValue(chip);
+                        m.Result = IntPtr.Zero;
+                        return;
+                    }
+
+                    var hit = HitAt(down);
+                    if (hit == OverlayHit.Close) DismissRequested?.Invoke(StopReason.Closed);
+                    else if (hit != OverlayHit.None) DismissRequested?.Invoke(StopReason.Clicked);
+                }
 
                 // 不交给 base：这里不再是"点击穿透"，点了就算数
                 m.Result = IntPtr.Zero;
@@ -299,6 +340,47 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    /// <summary>
+    /// 把芯片的值放进剪贴板，并把那个芯片的图标换成 ✓（约 <see cref="CopyBadgeMs"/> 毫秒）。
+    /// 复制失败绝不收起箭头：剪贴板被别的进程占着时最多重试 5 次，仍失败就只留个调试记录。
+    /// 运行在 UI（STA）线程上。
+    /// </summary>
+    private void CopyChipValue(int chip)
+    {
+        if (chip < 0 || chip >= _values.Length) return;
+
+        var value = _values[chip];
+        var copied = false;
+
+        for (var attempt = 0; attempt < ClipboardRetries && !copied; attempt++)
+        {
+            try
+            {
+                Clipboard.SetText(value);
+                copied = true;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                Thread.Sleep(ClipboardRetryDelayMs);
+            }
+            catch (System.Threading.ThreadStateException)
+            {
+                Thread.Sleep(ClipboardRetryDelayMs);
+            }
+        }
+
+        if (!copied)
+        {
+            System.Diagnostics.Debug.WriteLine($"agentpointer: 剪贴板被占用，未能复制芯片 #{chip} 的值。");
+            return;
+        }
+
+        _copiedChip = chip;
+        _copyResetTimer.Stop();
+        _copyResetTimer.Start();
+        Render();
+    }
+
     private void TrackMouseLeave()
     {
         var track = new NativeMethods.TRACKMOUSEEVENT
@@ -334,6 +416,13 @@ internal sealed class OverlayForm : Form
         _sign = sign;
         _target = targetGlobal;
         _command = command;
+
+        _values = AgentPointer.Core.Rendering.SignText.Parse(sign.RenderText)
+            .Where(segment => segment.IsValue)
+            .Select(segment => segment.Text)
+            .ToArray();
+        _copiedChip = null;
+        _copyResetTimer.Stop();
 
         _fadingOut = false;
         _scale = monitorDpi / 96d;
@@ -503,12 +592,13 @@ internal sealed class OverlayForm : Form
             _target.Y - _windowRect.Y),
         Color: _sign!.Color,
         SignFontSize: _fontSize,
-        Text: _sign.DisplayText,
+        Text: _sign.RenderText,
         Look: _command?.Look ?? new LookSpec(),
         Metrics: _metrics,
         DpiScale: _scale,
         AnimScale: animScale,
-        CloseButton: _command?.Behavior.CloseButton == true);
+        CloseButton: _command?.Behavior.CloseButton == true,
+        CopiedChip: _copiedChip);
 
     /// <summary>把内容画进 32bpp PArgb 位图，再作为分层窗口交给系统。位图跨帧复用。</summary>
     private void Render()
@@ -683,6 +773,8 @@ internal sealed class OverlayForm : Form
     public void HideNow()
     {
         StopHoverPoll();
+        _copyResetTimer.Stop();
+        _copiedChip = null;
         EnterPhase(AnimPhase.Idle);
         _fadingOut = false;
         _alpha = 1.0;
@@ -704,6 +796,8 @@ internal sealed class OverlayForm : Form
         if (!_fadingOut) return;
 
         StopHoverPoll();
+        _copyResetTimer.Stop();
+        _copiedChip = null;
         EnterPhase(AnimPhase.Idle);
         _fadingOut = false;
         _alpha = 1.0;
@@ -746,6 +840,8 @@ internal sealed class OverlayForm : Form
             _animTimer.Dispose();
             _hoverTimer.Stop();
             _hoverTimer.Dispose();
+            _copyResetTimer.Stop();
+            _copyResetTimer.Dispose();
             _frameBuffer?.Dispose();
             _frameBuffer = null;
             _hitRegions?.Dispose();

@@ -172,6 +172,15 @@ through the agent; the target itself and the space around the arrow head stay cl
 `--until-click` ends the guidance when the human clicks the target, `--until-any-click` when they
 click anywhere. Both watch the mouse without swallowing the click: it still reaches the app.
 
+`{{value}}` in `--text` becomes a copy button: the braces are not drawn, one click copies the whole
+value to the clipboard, the icon turns into a check mark for about a second, and the guidance stays
+up. Clicking the rest of the action label still dismisses it as usual, and the JSON result lists the
+values under `values`.
+
+```powershell
+agentpointer start --app chrome --element "PIN" --text "copy & paste the PIN {{482913}} here"
+```
+
 Claude Code can clear leftover guidance the moment you send a new prompt:
 
 ```json

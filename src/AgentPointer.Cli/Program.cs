@@ -236,6 +236,7 @@ internal static class Program
         if (!command.Json && notices.Length > 0) Err("以下参数暂不生效：" + string.Join("、", notices));
 
         var sign = new SignContent(command.Text, SafeParseColor(command.Look.Color));
+        var values = AgentPointer.Core.Rendering.SignText.Values(sign.RenderText);
         using var stop = StopSignal.CreateListener(command.OwnerPid);
         var form = manager.WindowFor(monitorForTarget);
 
@@ -280,6 +281,7 @@ internal static class Program
                 pointed = new { x = global.X, y = global.Y },
                 element = ElementJson(element),
                 text = sign.DisplayText,
+                values = values.Count > 0 ? values : null,
                 monitor = monitorForTarget.Index + 1,
                 ineffective = notices,
             }, JsonOptions));
@@ -351,6 +353,7 @@ internal static class Program
                 monitor = monitorForTarget.Index + 1,
                 endedBy = ReasonName(reason),
                 text = sign.DisplayText,
+                values = values.Count > 0 ? values : null,
                 ineffective = IneffectiveNotice(command),
             }, JsonOptions));
         }

@@ -563,7 +563,7 @@ public static class ArgParser
                                  window/mouse 作为显示器过滤条件
 
         外观：
-          --text <s>             牌子上的文字
+          --text <s>             牌子上的文字；{{value}} 变成可点的复制按钮（点击复制，箭头不收场）
           --from <side>          auto(默认)/left/right/top/bottom/top-left/top-right/bottom-left/bottom-right
           --color <name|#hex>    red orange yellow green teal blue purple pink black white，#RRGGBB 或 #RGB
           --size S|M|L           --style arrow           --shape bend|straight
@@ -585,6 +585,7 @@ public static class ArgParser
 
         点击交互：
           点牌子或箭杆会立刻收起箭头（原因 clicked）；目标附近与空白像素继续穿透到下层应用
+          {{value}} 芯片点了只把值复制到剪贴板，箭头不收场，图标约 1.5 秒后从 ✓ 变回复制图标
           stop --hook 供 Claude Code 的 UserPromptSubmit 钩子使用：静默、永不写 stdout、永远返回 0
           ~/.claude/settings.json：{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command",
           "command":"agentpointer stop --hook"}]}]}}
