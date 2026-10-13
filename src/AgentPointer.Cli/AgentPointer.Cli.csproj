@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentPointer.Core\AgentPointer.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!--
+      刻意用 Exe（控制台子系统）而不是 WinExe（GUI 子系统）。
+      GUI 子系统的进程从 PowerShell / 某些宿主启动时，stdout 会出现跨调用的延迟甚至丢失，
+      退出码也取不到。而 JSON 输出是这个 CLI 的主要接口，可靠性优先于
+      "从资源管理器双击时不闪黑框"——反正 agent 是在已有终端里调用的，直接附着到父控制台，
+      不会产生新窗口。
+    -->
+    <OutputType>Exe</OutputType>
+    <AssemblyName>agentpointer</AssemblyName>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      DPI 感知走 SDK 推荐的 MSBuild 属性（.NET 6+ 不要再手写 manifest 里的 windowsSettings，
+      否则会触发 WFAC010 警告）。
+
+      PerMonitorV2 是硬要求：
+      1. 覆盖层按每块显示器的 DPI 各自渲染，混合 DPI 机器上不会糊；
+      2. GetWindowRect / GetCursorPos 返回屏幕物理像素，与 UIA 的 BoundingRectangle
+         处在同一坐标系，坐标类参数才能直接用。
+      覆盖层本身用 AutoScaleMode.None + 自己做布局，不依赖 WinForms 的自动缩放。
+    -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\skills\agentpointer\SKILL.md" LogicalName="AgentPointer.Skill.md" />
+    <EmbeddedResource Include="..\..\skills\agentpointer\agents\openai.yaml" LogicalName="AgentPointer.Skill.openai.yaml" />
+    <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentPointer.Core\AgentPointer.Core.csproj" />
+    <ProjectReference Include="..\AgentPointer.Cli\AgentPointer.Cli.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>AgentPointer.Desktop</AssemblyName>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="app.ico" />
+    <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CopyCliForDevelopment" AfterTargets="Build" Condition="'$(RuntimeIdentifier)' == ''">
+    <ItemGroup>
+      <CliFiles Include="$(MSBuildProjectDirectory)\..\AgentPointer.Cli\bin\$(Configuration)\net10.0-windows\agentpointer.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(CliFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

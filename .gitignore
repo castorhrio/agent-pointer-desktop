@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+/artifacts/
+/TestResults/
+/.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+Thumbs.db
+.DS_Store

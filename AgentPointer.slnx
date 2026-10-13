@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentPointer.Cli/AgentPointer.Cli.csproj" />
+    <Project Path="src/AgentPointer.Core/AgentPointer.Core.csproj" />
+    <Project Path="src/AgentPointer.Tray/AgentPointer.Tray.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentPointer.Core.Tests/AgentPointer.Core.Tests.csproj" />
+  </Folder>
+</Solution>

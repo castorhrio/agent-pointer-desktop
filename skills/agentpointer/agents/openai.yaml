@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Pointer for Windows"
+  short_description: "Show a guide when a Windows task needs your hand"
+  default_prompt: "Use $agentpointer to point at the control I need to use and explain the action."
