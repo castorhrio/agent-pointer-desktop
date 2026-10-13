@@ -61,6 +61,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        Loaded -= OnLoaded;
         ApplyWindowIcon();
         ApplyDarkTitleBar();
         UpdateLanguageButton();
@@ -115,9 +116,12 @@ public partial class MainWindow : Window
         var endDemo = menu.Items.Add(Tr("Str.StopDemo"), null, async (_, _) => await StopDemoAsync("Str.DemoEnded"));
         endDemo.Enabled = _demoActive;
         var language = new WinForms.ToolStripMenuItem(Tr("Str.TrayLanguage")) { Enabled = !_actionRunning && !_demoActive };
+        var systemLanguage = new WinForms.ToolStripMenuItem("跟随系统 / System") { Checked = App.LanguagePreference == Languages.System };
+        systemLanguage.Click += async (_, _) => await SetLanguageAndRefreshAsync(Languages.System);
+        language.DropDownItems.Add(systemLanguage);
         foreach (var lang in Languages.All)
         {
-            var item = new WinForms.ToolStripMenuItem(lang.NativeName) { Checked = lang.Code == App.Language };
+            var item = new WinForms.ToolStripMenuItem(lang.NativeName) { Checked = lang.Code == App.LanguagePreference };
             item.Click += async (_, _) => await SetLanguageAndRefreshAsync(lang.Code);
             language.DropDownItems.Add(item);
         }
@@ -135,7 +139,7 @@ public partial class MainWindow : Window
 
     private async Task SetLanguageAndRefreshAsync(string language)
     {
-        if (App.Language == language) return;
+        if (App.LanguagePreference == language) return;
         await StopDemoAsync("Str.DemoEnded");
         App.SetLanguage(language);
         UpdateLanguageButton();
@@ -148,12 +152,15 @@ public partial class MainWindow : Window
     private void OnLanguageMenu(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu { StaysOpen = false };
+        var systemLanguage = new MenuItem { Header = "跟随系统 / System", IsChecked = App.LanguagePreference == Languages.System };
+        systemLanguage.Click += async (_, _) => await SetLanguageAndRefreshAsync(Languages.System);
+        menu.Items.Add(systemLanguage);
         foreach (var lang in Languages.All)
         {
             var item = new MenuItem
             {
-                Header = lang.NativeName, IsChecked = lang.Code == App.Language,
-                FontWeight = lang.Code == App.Language ? FontWeights.SemiBold : FontWeights.Normal,
+                Header = lang.NativeName, IsChecked = lang.Code == App.LanguagePreference,
+                FontWeight = lang.Code == App.LanguagePreference ? FontWeights.SemiBold : FontWeights.Normal,
             };
             item.Click += async (_, _) => await SetLanguageAndRefreshAsync(lang.Code);
             menu.Items.Add(item);
@@ -164,7 +171,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateLanguageButton() =>
-        LanguageButton.Content = Languages.Find(App.Language)?.NativeName ?? App.Language;
+        LanguageButton.Content = App.LanguagePreference == Languages.System
+            ? Tr("Str.LanguageSystem") : Languages.Find(App.Language)?.NativeName ?? App.Language;
 
     private static string Tr(string key) => (string?)Application.Current.TryFindResource(key) ?? key;
 
@@ -446,5 +454,5 @@ public partial class MainWindow : Window
 
 internal static class AgentPointerVersion
 {
-    public const string Current = "0.1.0";
+    public const string Current = "0.1.1";
 }

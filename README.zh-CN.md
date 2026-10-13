@@ -9,16 +9,16 @@ Claude Code / Codex 发起指引，箭头指出位置并说明该做什么，你
 产品基于 [bigarrow](https://github.com/franzenzenhofer/big-arrow-on-the-screen) 的布局算法与部分 CLI 约定。
 这是非官方 Windows 移植，使用 C# / WinForms / WPF 实现屏幕覆盖层和桌面接入界面。
 
-[下载 Windows x64](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.zip) · [全部版本](https://github.com/castorhrio/agent-pointer-desktop/releases) · [反馈问题](https://github.com/castorhrio/agent-pointer-desktop/issues)
+[下载 Windows 安装程序](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) · [全部版本](https://github.com/castorhrio/agent-pointer-desktop/releases) · [反馈问题](https://github.com/castorhrio/agent-pointer-desktop/issues)
 
 ![桌面应用](docs/desktop-preview.png)
 
 ## 当前状态
 
-`v0.1.0` — 首个公开版本，提供 Windows x64 自包含下载包。
+`v0.1.1` — 单文件 Windows 安装程序、跟随系统语言，并修复窗口重复加载时产生多个托盘图标的问题。
 
 已通过实际安装包验证：隔离目录安装、桌面首次打开、体验按钮实际点击、关闭到托盘与
-单实例重新打开；另通过独立进程验证点击穿透、`start` 立即返回、owner 隔离、显示器换算及错误码。
+单实例重新打开与语言选择；另通过独立进程验证点击穿透、`start` 立即返回、owner 隔离、显示器换算及错误码。
 Claude Code / Codex 技能文件的安装状态可检查；真实 agent 会话中的完整任务仍需由使用者验证。
 
 ## 主要能力
@@ -32,24 +32,27 @@ Claude Code / Codex 技能文件的安装状态可检查；真实 agent 会话�
 | 点击穿透 | 覆盖层允许鼠标点击到下方应用，并经过跨进程实际点击验证 |
 | 多 agent 隔离 | 按 owner 停止指引，owner 退出后自动清理 |
 | 桌面与 CLI | 桌面面板提供设置和体验，CLI 供 agent 独立调用 |
-| 中英文界面 | 支持简体中文与英文切换 |
+| 跟随系统语言 | 默认使用 Windows 显示语言，也可手动选择简体中文或英文 |
 
 ## 安装
 
 要求 **Windows 10/11 x64**。从 [GitHub Releases](https://github.com/castorhrio/agent-pointer-desktop/releases/latest)
-下载并完整解压，目标电脑无需安装 .NET 或开发工具。
+下载安装程序并双击运行，目标电脑无需安装 .NET 或开发工具。
 
 | 下载 | 用途 |
 |---|---|
-| [agentpointer-0.1.0-win-x64.zip](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.zip) | 完整桌面应用，可安装或便携运行 |
-| [SHA-256 校验文件](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.sha256) | 校验 ZIP 下载是否完整 |
+| [agentpointer-0.1.1-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) | 推荐：单个文件，双击进入安装向导 |
+| [便携 ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.zip) | 高级用法：完整解压后的程序目录 |
+| [SHA-256 校验文件](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.sha256) | 校验安装程序或 ZIP 是否完整 |
 
-**方式一：安装使用。** 解压后双击 `Install.cmd`。安装到
-`%LOCALAPPDATA%\Programs\AgentPointer`，添加用户 PATH 与开始菜单快捷方式，并打开桌面面板。
-技能由用户在面板内选择安装；安装程序默认不改写 agent 技能。不需要管理员权限。
-已打开的终端需重启以读取新 PATH。
+**推荐：安装使用。** 双击 `agentpointer-0.1.1-win-x64-setup.exe`，按向导完成安装。
+向导根据 Windows 显示语言使用中文或英文，可选择安装目录，创建桌面与开始菜单快捷方式，
+完成后可直接打开应用。默认目录为 `%LOCALAPPDATA%\Programs\AgentPointer`，无需管理员权限。
+应用首次启动默认跟随 Windows 显示语言；语言菜单提供「跟随系统 / System」「中文（简体）」和
+「English」，手动选择会记住。
+技能由用户在应用内选择安装；向导不改写技能或 PATH，已安装的技能通过 CLI 绝对路径调用。
 
-**方式二：便携使用。** 解压后直接双击 `AgentPointer.Desktop.exe`。
+**高级用法：便携 ZIP。** 完整解压 ZIP 后，直接双击 `AgentPointer.Desktop.exe`。
 保留整个解压目录；程序依赖同目录的 CLI 和运行时文件。
 
 下载包包含：
@@ -58,7 +61,7 @@ Claude Code / Codex 技能文件的安装状态可检查；真实 agent 会话�
 - `agentpointer.exe`：供 agent 调用的屏幕指引工具，内嵌技能与 Codex 元数据。
 - 自包含运行时、安装脚本、中英文使用说明和许可证。
 
-也可在解压目录的 PowerShell 中安装：
+ZIP 中保留 `Install.cmd` 与 PowerShell 安装脚本，供脚本化安装使用：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
@@ -72,8 +75,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 桌面的「检查更新」对比本仓库最新 Release 的版本，有新版时提供发布页链接。
 更新需手动下载、退出正在运行的应用，再解压或重新安装。
 
-卸载时删除安装目录、用户 PATH 对应项、开始菜单的 Agent Pointer 快捷方式，
-以及你安装的两个 agentpointer 技能目录。
+安装版可从「设置 → 应用 → Agent Pointer」或开始菜单的「卸载 Agent Pointer」卸载。
+卸载保留应用偏好、已安装的 agent 技能以及安装目录中的其他文件。
+不再需要技能时，另行删除这两个 agentpointer 技能目录。
+便携版或脚本安装版则删除其目录，以及自行添加的 PATH 项或快捷方式。
 
 ## 第一次使用
 
@@ -90,6 +95,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 CLI 可由 agent 独立调用，普通指引不依赖桌面面板持续打开。
 
 ## 接入 Claude Code / Codex
+
+手动使用 CLI 时，在安装目录打开 PowerShell 并运行 `./agentpointer.exe ...`，
+或将该目录加入用户 PATH。下列 `agentpointer` 命令示例假定已配置 PATH。
 
 桌面按钮与下列命令使用同一条安装逻辑：
 
@@ -203,18 +211,21 @@ dotnet run --project src/AgentPointer.Tray
 dotnet test tests/AgentPointer.Core.Tests/AgentPointer.Core.Tests.csproj
 dotnet run --project tests/AgentPointer.WindowsChecks -- src/AgentPointer.Cli/bin/Debug/net10.0-windows/agentpointer.exe docs/overlay-preview.png
 dotnet run --project tests/AgentPointer.WindowsChecks -- --desktop src/AgentPointer.Tray/bin/Debug/net10.0-windows/AgentPointer.Desktop.exe docs/desktop-preview.png
+dotnet run --project tests/AgentPointer.WindowsChecks -- --tray-lifecycle src/AgentPointer.Tray/bin/Debug/net10.0-windows/AgentPointer.Desktop.exe
 ```
 
 CLI/Core 使用 .NET 10，CLI 为 WinForms，托盘为 WPF。托盘的检查更新只在成功取得
 有效版本且完成比较后才显示“已是最新”；HTTP 或版本数据错误显示检查失败。
 
-生成包含桌面、CLI、运行时、安装入口、中英文说明和 SHA-256 校验文件的发布包：
+生成包含桌面、CLI、运行时、中英文说明、ZIP 和 SHA-256 校验文件的发布包。
+构建 x64 安装程序还需在 PATH 中配置 [NSIS 3](https://nsis.sourceforge.io/Download)：
 
 ```powershell
 powershell -NoProfile -File .\scripts\Publish.ps1
 ```
 
-输出位于 `artifacts/`。`-Runtime win-arm64` 可从源码生成 ARM64 包；当前公开下载与实际运行验证为 x64。
+NSIS 不在 PATH 时传入 `-NsisCompiler <makensis.exe 路径>`。
+输出位于 `artifacts/`。`-Runtime win-arm64` 可从源码生成 ARM64 ZIP；当前公开下载与实际运行验证为 x64。
 
 `WindowsChecks` 会临时显示独立进程的测试按钮，在指引卡片的不透明区域发送真实鼠标输入，
 验证跨进程点击送达、透明背景、焦点、后台返回及管道关闭、owner/stop/hook 隔离、显示器坐标

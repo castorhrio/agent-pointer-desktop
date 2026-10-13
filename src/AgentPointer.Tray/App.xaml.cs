@@ -23,6 +23,7 @@ public partial class App : Application
 
     /// <summary>当前 UI 语言。解析顺序：持久化选择 → 系统语言 → <see cref="Languages.Fallback"/>。</summary>
     public static string Language { get; private set; } = Languages.Fallback;
+    public static string LanguagePreference { get; private set; } = Languages.System;
 
     private static string SettingsDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgentPointer");
@@ -66,11 +67,12 @@ public partial class App : Application
     /// <summary>切换语言并持久化；语言入口（面板按钮 / 托盘菜单）统一走这里。</summary>
     public static void SetLanguage(string language)
     {
-        if (Languages.Find(language) is null) return;
+        if (language != Languages.System && Languages.Find(language) is null) return;
 
-        Language = language;
+        LanguagePreference = language == Languages.System ? Languages.System : Languages.Find(language)!.Code;
+        Language = language == Languages.System ? Languages.ResolveSystem() : Languages.Find(language)!.Code;
         SaveLanguage();
-        ApplyLanguage(language);
+        ApplyLanguage(Language);
     }
 
     private static void LoadLanguage()
@@ -79,9 +81,10 @@ public partial class App : Application
         {
             if (File.Exists(SettingsPath)
                 && JsonSerializer.Deserialize<SettingsDto>(File.ReadAllText(SettingsPath, Encoding.UTF8)) is { Language: { } saved}
-                && Languages.Find(saved) is not null)
+                && (saved == Languages.System || Languages.Find(saved) is not null))
             {
-                Language = Languages.Find(saved)!.Code;
+                LanguagePreference = saved == Languages.System ? Languages.System : Languages.Find(saved)!.Code;
+                Language = saved == Languages.System ? Languages.ResolveSystem() : Languages.Find(saved)!.Code;
                 return;
             }
         }
@@ -98,7 +101,7 @@ public partial class App : Application
         try
         {
             Directory.CreateDirectory(SettingsDir);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(new SettingsDto { Language = Language }), new UTF8Encoding(false));
+            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(new SettingsDto { Language = LanguagePreference }), new UTF8Encoding(false));
         }
         catch
         {

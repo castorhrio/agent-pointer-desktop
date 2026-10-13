@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace AgentPointer.Tray;
 
@@ -17,6 +18,8 @@ internal sealed record AppLanguage(string Code, string NativeName);
 /// </summary>
 internal static class Languages
 {
+    public const string System = "system";
+
     /// <summary>en-US 是回退基础语言，必须永远存在且字典齐全。</summary>
     public const string Fallback = "en-US";
 
@@ -33,9 +36,18 @@ internal static class Languages
     /// 解析系统语言：精确匹配（zh-CN）→ 中性匹配（任何 zh-* → zh-CN，任何 en-* → en-US）
     /// → 注册表都没有就回退英文。
     /// </summary>
+    [DllImport("kernel32.dll")]
+    private static extern ushort GetUserDefaultUILanguage();
+
     public static string ResolveSystem()
     {
-        var ui = CultureInfo.CurrentUICulture;
+        // 使用 Windows 显示语言，不受启动终端或进程 CurrentUICulture 覆盖影响。
+        try { return Resolve(CultureInfo.GetCultureInfo(GetUserDefaultUILanguage())); }
+        catch (CultureNotFoundException) { return Resolve(CultureInfo.CurrentUICulture); }
+    }
+
+    internal static string Resolve(CultureInfo ui)
+    {
         if (!string.IsNullOrEmpty(ui.Name) && Find(ui.Name) is { } exact)
         {
             return exact.Code;

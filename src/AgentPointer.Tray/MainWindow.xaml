@@ -35,6 +35,7 @@
                                Foreground="{StaticResource BrushTextDim}" Margin="0,3,0,0" />
                 </StackPanel>
                 <Button x:Name="LanguageButton" Grid.Column="2" Style="{StaticResource GhostButton}"
+                        AutomationProperties.AutomationId="Language"
                         VerticalAlignment="Center" Click="OnLanguageMenu" />
             </Grid>
 

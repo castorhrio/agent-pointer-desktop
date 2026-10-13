@@ -7,6 +7,7 @@
     <sys:String x:Key="Str.StepExperience">01  先体验一次指引</sys:String>
     <sys:String x:Key="Str.ExperienceDescription">点击下方按钮，箭头会指向右侧的演示按钮。完成这一步后，指引会收起。</sys:String>
     <sys:String x:Key="Str.StartDemo">体验屏幕指引</sys:String>
+    <sys:String x:Key="Str.LanguageSystem">跟随系统</sys:String>
     <sys:String x:Key="Str.StopDemo">结束体验</sys:String>
     <sys:String x:Key="Str.DemoBadge">本地演示 · 不执行实际任务</sys:String>
     <sys:String x:Key="Str.DemoTitle">这就是 agent 请你接手时的样子</sys:String>

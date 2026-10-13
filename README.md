@@ -9,16 +9,16 @@ Claude Code / Codex can display an arrow with an action label. You decide and co
 This unofficial port adapts layout algorithms and some CLI conventions from
 [bigarrow](https://github.com/franzenzenhofer/big-arrow-on-the-screen), with a C# / WinForms / WPF overlay and desktop setup panel.
 
-[Download for Windows x64](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.zip) · [All releases](https://github.com/castorhrio/agent-pointer-desktop/releases) · [Report an issue](https://github.com/castorhrio/agent-pointer-desktop/issues)
+[Download Windows installer](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) · [All releases](https://github.com/castorhrio/agent-pointer-desktop/releases) · [Report an issue](https://github.com/castorhrio/agent-pointer-desktop/issues)
 
 ![Desktop app](docs/desktop-preview.png)
 
 ## Status
 
-`v0.1.0` — first public release, with a self-contained Windows x64 download.
+`v0.1.1` — a single-file Windows installer, system language detection, and a fix for duplicate tray icons during repeated window loading.
 
 Verified with the actual package: installation into an isolated directory, visible desktop startup,
-a real click through the demo, closing to the tray, and reopening a single instance. Separate-process
+a real click through the demo, closing to the tray, reopening a single instance, and language selection. Separate-process
 checks cover click-through, prompt return from `start`, owner isolation, display conversion, and exit codes.
 Claude Code / Codex skill file status can be checked; complete tasks in a live agent session still need user validation.
 
@@ -33,25 +33,30 @@ Claude Code / Codex skill file status can be checked; complete tasks in a live a
 | Click-through | Mouse clicks reach the app beneath the overlay, verified across processes |
 | Multiple agents | Stop guidance by owner; overlays disappear when their owner exits |
 | Desktop and CLI | The panel handles setup and demos; agents can call the CLI independently |
-| Two interface languages | Switch between English and Simplified Chinese |
+| System language | Follow the Windows display language by default, with manual English / Chinese choices |
 
 ## Install
 
-Requires **Windows 10/11 x64**. Download from
-[GitHub Releases](https://github.com/castorhrio/agent-pointer-desktop/releases/latest) and extract the entire archive.
+Requires **Windows 10/11 x64**. Download the installer from
+[GitHub Releases](https://github.com/castorhrio/agent-pointer-desktop/releases/latest) and double-click it.
 No .NET installation or development tools are required on the target computer.
 
 | Download | Purpose |
 |---|---|
-| [agentpointer-0.1.0-win-x64.zip](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.zip) | Complete desktop app for installation or portable use |
-| [SHA-256 checksum](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.0-win-x64.sha256) | Verify that the ZIP download is intact |
+| [agentpointer-0.1.1-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) | Recommended: one file with an installation wizard |
+| [Portable ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.zip) | Advanced use: the complete unpacked application |
+| [SHA-256 checksums](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.sha256) | Verify either download |
 
-**Option A — install.** After extracting, double-click `Install.cmd`. It installs to
-`%LOCALAPPDATA%\Programs\AgentPointer`, adds the user PATH and a Start-menu shortcut, and opens the desktop panel.
-Choose whether to install agent skills in the panel; the installer leaves skills untouched by default.
-No administrator rights are required. Restart open terminals to pick up the new PATH.
+**Recommended — install.** Run `agentpointer-0.1.1-win-x64-setup.exe` and follow the wizard.
+It selects Chinese or English from your Windows display language, lets you choose an installation directory,
+creates desktop and Start-menu shortcuts, and offers to open the app when finished.
+The default directory is `%LOCALAPPDATA%\Programs\AgentPointer`. No administrator rights are required.
+The app follows the Windows display language on first launch. Its language menu includes **跟随系统 / System**,
+**中文（简体）**, and **English**; manual choices are remembered.
+Choose whether to install agent skills in the app. The wizard leaves skills and PATH unchanged;
+installed skills use the CLI's absolute path.
 
-**Option B — portable.** After extracting, double-click `AgentPointer.Desktop.exe`.
+**Advanced — portable ZIP.** Extract the entire ZIP and double-click `AgentPointer.Desktop.exe`.
 Keep the entire extracted directory together: the app needs its adjacent CLI and runtime files.
 
 The download includes:
@@ -60,7 +65,7 @@ The download includes:
 - `agentpointer.exe`: the guidance tool for agents, with embedded skills and Codex metadata.
 - The self-contained runtime, installation scripts, both README languages, and license notices.
 
-You can also install from PowerShell in the extracted directory:
+The ZIP also retains `Install.cmd` and a PowerShell installer for scripted installation:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
@@ -74,8 +79,10 @@ The package is not Authenticode signed; Windows may show a SmartScreen warning a
 **Check for updates** compares the latest release in this repository and provides its page link when a newer version is available.
 To update, download the package, exit the running app, then extract it or run the installer again.
 
-To uninstall, remove the installation directory, its user PATH entry, the Agent Pointer Start-menu shortcut,
-and the two agentpointer skill directories if you installed them.
+To uninstall the setup version, use **Settings → Apps → Agent Pointer** or **Uninstall Agent Pointer**
+in the Start menu. Uninstallation keeps your app preferences, installed agent skills, and unrelated files.
+Remove the two agentpointer skill directories separately if you no longer need them.
+For a portable/script installation, remove its directory and any PATH entry or shortcuts you added.
 
 ## First run
 
@@ -92,6 +99,9 @@ Closing the window keeps the app in the tray. Opening it again returns to the sa
 The CLI works independently, so ordinary guidance does not require the desktop panel to stay open.
 
 ## Claude Code / Codex integration
+
+For manual CLI use, open PowerShell in the installation directory and run `./agentpointer.exe ...`,
+or add that directory to your user PATH. The command examples below assume PATH is configured.
 
 The desktop action uses the same installation path as these commands:
 
@@ -207,19 +217,21 @@ dotnet run --project src/AgentPointer.Tray
 dotnet test tests/AgentPointer.Core.Tests/AgentPointer.Core.Tests.csproj
 dotnet run --project tests/AgentPointer.WindowsChecks -- src/AgentPointer.Cli/bin/Debug/net10.0-windows/agentpointer.exe docs/overlay-preview.png
 dotnet run --project tests/AgentPointer.WindowsChecks -- --desktop src/AgentPointer.Tray/bin/Debug/net10.0-windows/AgentPointer.Desktop.exe docs/desktop-preview.png
+dotnet run --project tests/AgentPointer.WindowsChecks -- --tray-lifecycle src/AgentPointer.Tray/bin/Debug/net10.0-windows/AgentPointer.Desktop.exe
 ```
 
 CLI/Core use .NET 10; the CLI uses WinForms and the tray app uses WPF. Update checks report “Up to date”
 only after retrieving and comparing a valid version. HTTP and version-data errors report a failed check.
 
-Build a release package containing the desktop app, CLI, runtime, installation entry points,
-both README languages, and a SHA-256 checksum:
+Build a release containing the desktop app, CLI, runtime, both README languages, a ZIP, and checksums.
+Building the x64 setup executable also requires [NSIS 3](https://nsis.sourceforge.io/Download) on PATH:
 
 ```powershell
 powershell -NoProfile -File .\scripts\Publish.ps1
 ```
 
-Output goes into `artifacts/`. `-Runtime win-arm64` builds an ARM64 package from source;
+Pass `-NsisCompiler <path-to-makensis.exe>` if NSIS is not on PATH.
+Output goes into `artifacts/`. `-Runtime win-arm64` builds an ARM64 ZIP from source;
 the current public download and actual runtime verification cover x64.
 
 `WindowsChecks` opens a separate test process and sends real mouse input through an opaque part of the

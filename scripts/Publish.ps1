@@ -1,9 +1,13 @@
 param(
     [ValidateSet('win-x64', 'win-arm64')]
-    [string]$Runtime = 'win-x64'
+    [string]$Runtime = 'win-x64',
+    [string]$NsisCompiler = 'makensis.exe'
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Runtime -eq 'win-x64') {
+    $compiler = (Get-Command $NsisCompiler -ErrorAction Stop).Source
+}
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $artifactRoot = Join-Path $repoRoot 'artifacts'
 $packageId = [Guid]::NewGuid().ToString('N')
@@ -38,8 +42,26 @@ $version = [regex]::Match($programSource, 'public const string Version = "([^"]+
 if (-not $version) { throw 'Could not read the CLI version.' }
 $archive = Join-Path $artifactRoot ("agentpointer-$version-$Runtime.zip")
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -Force
+$releaseFiles = @($archive)
+if ($Runtime -eq 'win-x64') {
+    $uninstallFiles = Join-Path $artifactRoot ('uninstall-' + $packageId + '.nsh')
+    $uninstallCommands = @(Get-ChildItem -LiteralPath $staging -Recurse -File | ForEach-Object {
+        'Delete "$INSTDIR\' + $_.FullName.Substring($staging.Length + 1).Replace('$', '$$') + '"'
+    })
+    $uninstallCommands += @(Get-ChildItem -LiteralPath $staging -Recurse -Directory | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
+        'RMDir "$INSTDIR\' + $_.FullName.Substring($staging.Length + 1).Replace('$', '$$') + '"'
+    })
+    [IO.File]::WriteAllText($uninstallFiles, (($uninstallCommands -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+    $setup = Join-Path $artifactRoot "agentpointer-$version-$Runtime-setup.exe"
+    & $compiler /V2 /WX /INPUTCHARSET UTF8 "/DPACKAGE_DIR=$staging" "/DOUTPUT_FILE=$setup" "/DVERSION=$version" `
+        "/DAPP_ICON=$(Join-Path $repoRoot 'src/AgentPointer.Tray/app.ico')" "/DUNINSTALL_FILES=$uninstallFiles" (Join-Path $PSScriptRoot 'Installer.nsi')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed.' }
+    $releaseFiles += $setup
+}
 $checksumPath = Join-Path $artifactRoot "agentpointer-$version-$Runtime.sha256"
-$checksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText($checksumPath, ($checksum + '  ' + [IO.Path]::GetFileName($archive) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
-Write-Output $archive
+$checksums = @($releaseFiles | ForEach-Object {
+    (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($_)
+})
+[IO.File]::WriteAllText($checksumPath, (($checksums -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+Write-Output $releaseFiles
 Write-Output $checksumPath

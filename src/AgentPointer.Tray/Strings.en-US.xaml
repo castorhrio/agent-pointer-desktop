@@ -7,6 +7,7 @@
     <sys:String x:Key="Str.StepExperience">01  Try a guided step</sys:String>
     <sys:String x:Key="Str.ExperienceDescription">Start the demo. An arrow will point at the button on the right and disappear when you complete the step.</sys:String>
     <sys:String x:Key="Str.StartDemo">Try the demo</sys:String>
+    <sys:String x:Key="Str.LanguageSystem">System default</sys:String>
     <sys:String x:Key="Str.StopDemo">End demo</sys:String>
     <sys:String x:Key="Str.DemoBadge">LOCAL DEMO · NO REAL TASK</sys:String>
     <sys:String x:Key="Str.DemoTitle">This is what a handoff looks like</sys:String>

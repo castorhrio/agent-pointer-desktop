@@ -699,7 +699,7 @@ internal sealed class TargetNotFoundException : Exception
 
 internal static class AgentPointerInfo
 {
-    public const string Version = "0.1.0";
+    public const string Version = "0.1.1";
 }
 
 /// <summary>owner agent 进程是否还活着。</summary>

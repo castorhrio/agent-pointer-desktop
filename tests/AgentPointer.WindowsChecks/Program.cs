@@ -18,6 +18,8 @@ internal static class Program
     private static int Main(string[] args)
     {
         System.Windows.Forms.Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        if (args.Length == 3 && args[0] == "--installer") return InstallerChecks.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--tray-lifecycle") return DesktopChecks.CheckTrayLifecycle(args[1]);
         if (args.Length == 3 && args[0] == "--desktop") return DesktopChecks.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--target") return RunTarget(args[1]);
         if (args.Length != 2)
@@ -46,6 +48,11 @@ internal static class Program
                 GetWindowThreadProcessId(WindowFromPoint(new Point(x + 30, y + 30)), out var receiver);
                 return receiver == target.Id;
             }, "test window is actually visible above other applications");
+            WaitFor(() =>
+            {
+                GetWindowThreadProcessId(GetForegroundWindow(), out var foregroundPid);
+                return foregroundPid == target.Id;
+            }, "test window has finished activating before focus preservation is measured");
             var targetPoint = $"{x + width - 130},{y + height / 2}";
             var foreground = GetForegroundWindow();
             var first = Invoke(cli, Environment.ProcessId, "start", "--at", targetPoint,
