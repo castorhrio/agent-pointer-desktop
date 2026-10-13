@@ -54,11 +54,28 @@ public class AppAliasesTests
     }
 
     [Fact]
-    public void safari与edge按chromium系处理()
+    public void edge只映射到msedge()
     {
-        Assert.Equal(new[] { "msedge", "chrome" }, Candidates("Safari").Skip(1));
-        // "Microsoft Edge" 比 "Safari" 多一个去掉空格的候选（"MicrosoftEdge"），所以跳过两个
-        Assert.Equal(new[] { "msedge", "chrome" }, Candidates("Microsoft Edge").Skip(2));
+        Assert.Equal(new[] { "Edge", "msedge" }, Candidates("Edge"));
+        Assert.Equal(new[] { "Microsoft Edge", "MicrosoftEdge", "msedge" }, Candidates("Microsoft Edge"));
+    }
+
+    [Fact]
+    public void safari硬失配且不会退到chrome()
+    {
+        // Windows 上没有 Safari：只给一个必然落空的进程名，让调用方拿到退出码 3
+        Assert.Equal(new[] { "Safari", "safari" }, Candidates("Safari"));
+    }
+
+    [Fact]
+    public void 只有chromium系别名才给出chrome进程名()
+    {
+        Assert.Contains("chrome", Candidates("Google Chrome"));
+
+        foreach (var app in new[] { "Safari", "Edge", "Microsoft Edge", "Firefox", "Notepad" })
+        {
+            Assert.DoesNotContain("chrome", Candidates(app));
+        }
     }
 
     [Fact]

@@ -21,14 +21,31 @@ public static class AppAliases
         "Settings", "设置",
     };
 
-    /// <summary>键为去掉空格、去掉 .exe、小写后的应用名。</summary>
+    /// <summary>
+    /// 键为去掉空格、去掉 .exe、小写后的应用名。
+    ///
+    /// <para><b>跨应用映射必须逐条说得出理由</b>：别名只允许落到同一个应用，或者落到
+    /// Windows 上的<strong>等价物</strong>。绝不允许"同类产品"式的兜底——那会让
+    /// <c>--app Safari</c> 在 Safari 缺席时静静地指到 Chrome 上，agent 还以为指对了。</para>
+    ///
+    /// <list type="bullet">
+    /// <item>终端族（<c>Terminal</c> / <c>iTerm2</c> → WindowsTerminal、powershell、pwsh、cmd）：
+    /// 都是终端，指到哪一个都等于"运行 agent 的那个终端"。</item>
+    /// <item>mac 等价物（<c>Keynote</c> → POWERPNT、<c>TextEdit</c> → notepad、
+    /// <c>Mail</c> → OUTLOOK、<c>Finder</c> → explorer）：上游脚本本来就这么写，
+    /// 在 Windows 上要落到能顶替它的那个程序。</item>
+    /// </list>
+    /// </summary>
     private static readonly Dictionary<string, string[]> Aliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["googlechrome"] = new[] { "chrome" },
         ["chrome"] = new[] { "chrome" },
-        ["microsoftedge"] = new[] { "msedge", "chrome" },
-        ["edge"] = new[] { "msedge", "chrome" },
-        ["safari"] = new[] { "msedge", "chrome" },
+        // Edge 只映射到 msedge：Chrome 不是"同一个应用"，它是另一个浏览器。
+        ["microsoftedge"] = new[] { "msedge" },
+        ["edge"] = new[] { "msedge" },
+        // Safari 在 Windows 上不存在，也没有等价物。列一个必然落空的候选（safari），
+        // 让 WindowFinder 干净地以退出码 3 结束，而不是指到 Chrome 上。
+        ["safari"] = new[] { "safari" },
         ["firefox"] = new[] { "firefox" },
 
         ["visualstudiocode"] = new[] { "Code" },

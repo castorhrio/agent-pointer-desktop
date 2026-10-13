@@ -56,94 +56,54 @@ public static class WindowFinder
     /// 按 <c>App</c> 或 <c>App:title</c> 找窗口。找不到返回 null。
     ///
     /// <para>匹配顺序：<see cref="AppAliases.Candidates"/> 逐个候选尝试，每个候选先比进程名、
-    /// 再比可执行文件的 FileDescription（上游 App 名往往落在描述里）；标题能收窄就收窄。
-    /// 全部候选都不中时，最后退到窗口标题包含查询串。</para>
+    /// 再比可执行文件的 FileDescription（上游 App 名往往落在描述里）。给了 <c>App:title</c>
+    /// 就<strong>必须</strong>有窗口的标题包含它，否则返回 null（退出码 3）——绝不退回同进程里
+    /// 随便一个窗口，那等于指着错误的窗口说"就是它"。只有所有候选都没命中任何进程时，才把
+    /// 查询串当成窗口标题找。挑选规则本身在 <see cref="WindowPicker"/> 里，可单测。</para>
     /// </summary>
     public static WindowMatch? Find(string query)
     {
         if (string.IsNullOrWhiteSpace(query)) return null;
 
-        var (appPart, titlePart) = SplitQuery(query);
         var windows = Enumerate();
-        List<WindowMatch>? fallback = null;
-
-        foreach (var candidate in AppAliases.Candidates(appPart))
-        {
-            var hits = windows.Where(w => CandidateMatches(w, candidate)).ToList();
-            if (hits.Count == 0) continue;
-
-            if (titlePart is not null)
-            {
-                var narrowed = hits
-                    .Where(w => w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (narrowed.Count > 0) return Pick(narrowed, titlePart);
-            }
-
-            // 标题对不上时留作兜底，同时继续试后面的候选（更精确的别名可能命中）
-            fallback ??= hits;
-        }
-
-        if (fallback is not null) return Pick(fallback, null);
-
-        // 最后手段：上游的 App:title 里 title 有时就是唯一的线索
-        var byTitle = windows
-            .Where(w => w.Title.Contains(appPart, StringComparison.OrdinalIgnoreCase))
+        var candidates = windows
+            .Select((window, index) => new WindowCandidate(
+                index,
+                window.ProcessName,
+                FileDescriptionOf(window.Handle),
+                window.Title,
+                (long)window.Bounds.Width * window.Bounds.Height))
             .ToList();
 
-        return byTitle.Count > 0 ? Pick(byTitle, appPart) : null;
+        var picked = WindowPicker.Pick(candidates, query);
+        return picked is null ? null : windows[picked.Order];
     }
 
     /// <summary>单个候选是否命中这个窗口：进程名 → FileDescription → ApplicationFrameHost 标题。</summary>
-    internal static bool CandidateMatches(WindowMatch window, string candidate)
-    {
-        if (ProcessMatches(window.ProcessName, candidate)) return true;
-
-        var description = FileDescriptionOf(window.Handle);
-        if (description is not null && description.Contains(candidate, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        // ApplicationFrameHost 一个进程承载一堆设置窗口，只能靠标题认
-        return string.Equals(candidate, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)
-            && AppAliases.ApplicationFrameHostTitleHints.Any(hint =>
-                window.Title.Contains(hint, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static WindowMatch Pick(IReadOnlyList<WindowMatch> candidates, string? titlePart) =>
-        candidates
-            .OrderByDescending(w => titlePart is not null &&
-                                    w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(w => (long)w.Bounds.Width * w.Bounds.Height)
-            .First();
+    internal static bool CandidateMatches(WindowMatch window, string candidate) =>
+        WindowPicker.Matches(
+            new WindowCandidate(
+                0, window.ProcessName, FileDescriptionOf(window.Handle), window.Title,
+                (long)window.Bounds.Width * window.Bounds.Height),
+            candidate);
 
     /// <summary>把 <c>App:标题</c> 拆开。标题里可以含冒号，所以只拆第一个。</summary>
-    public static (string App, string? Title) SplitQuery(string query)
-    {
-        var trimmed = query.Trim();
-        var idx = trimmed.IndexOf(':');
-
-        return idx < 0
-            ? (trimmed, null)
-            : (trimmed[..idx].Trim(), trimmed[(idx + 1)..].Trim() is { Length: > 0 } t ? t : null);
-    }
+    public static (string App, string? Title) SplitQuery(string query) => WindowPicker.SplitQuery(query);
 
     /// <summary>进程名匹配：忽略大小写、忽略 .exe 后缀。</summary>
-    public static bool ProcessMatches(string? processName, string query)
-    {
-        if (string.IsNullOrEmpty(processName)) return false;
-
-        var normalize = (string s) =>
-            s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? s[..^4] : s;
-
-        return string.Equals(normalize(processName), normalize(query), StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool ProcessMatches(string? processName, string query) =>
+        WindowPicker.ProcessMatches(processName, query);
 
     /// <summary>
-    /// 把目标窗口置前。后台进程直接调 SetForegroundWindow 经常失败（Windows 的前台锁），
-    /// 所以要 AllowSetForegroundWindow + AttachThreadInput 组合拳。
+    /// 把目标窗口置前。后台进程直接调 <c>SetForegroundWindow</c> 会被 Windows 的前台锁挡下，
+    /// 而 <c>AllowSetForegroundWindow</c> 只对"调用者自己就是前台进程"有效——从 agentpointer
+    /// 这个后台进程调它换不来置前权限，所以这里不依赖它。
+    ///
+    /// <para>真正有效的组合：把<strong>当前线程挂到前台线程上</strong>（只要线程 id 不同，哪怕目标
+    /// 就是前台线程所在进程的另一个窗口也要挂），然后 <c>BringWindowToTop</c> 调 Z 序、
+    /// <c>SetForegroundWindow</c> 拿激活，最后在 <c>finally</c> 里摘下。</para>
+    ///
+    /// <para>返回 false 表示没置前成功；调用方只提醒，不让命令失败。</para>
     /// </summary>
     public static bool TryRaise(IntPtr hWnd)
     {
@@ -151,36 +111,29 @@ public static class WindowFinder
 
         try
         {
-            var foreground = NativeMethods.GetForegroundWindow();
-            var targetThread = NativeMethods.GetWindowThreadProcessId(hWnd, out _);
-            var foregroundThread = NativeMethods.GetWindowThreadProcessId(foreground, out _);
-
             if (NativeMethods.IsIconic(hWnd))
             {
                 NativeMethods.ShowWindow(hWnd, Win32.SW_RESTORE);
             }
 
-            NativeMethods.AllowSetForegroundWindow(-1);
-            NativeMethods.BringWindowToTop(hWnd);
+            var currentThread = NativeMethods.GetCurrentThreadId();
+            var foreground = NativeMethods.GetForegroundWindow();
+            var foregroundThread = NativeMethods.GetWindowThreadProcessId(foreground, out _);
 
-            var attached = false;
-            if (foregroundThread != 0 && foregroundThread != targetThread)
-            {
-                attached = NativeMethods.AttachThreadInput(
-                    NativeMethods.GetCurrentThreadId(), foregroundThread, true);
-            }
+            var attached = foregroundThread != 0
+                           && foregroundThread != currentThread
+                           && NativeMethods.AttachThreadInput(currentThread, foregroundThread, true);
 
             try
             {
-                var ok = NativeMethods.SetForegroundWindow(hWnd);
-                return ok;
+                NativeMethods.BringWindowToTop(hWnd);
+                return NativeMethods.SetForegroundWindow(hWnd);
             }
             finally
             {
                 if (attached)
                 {
-                    NativeMethods.AttachThreadInput(
-                        NativeMethods.GetCurrentThreadId(), foregroundThread, false);
+                    NativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
                 }
             }
         }

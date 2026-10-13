@@ -226,7 +226,8 @@ internal static class Program
 
         using var manager = new OverlayManager();
 
-        var target = ResolveTarget(manager, command, out var element, out var targetRect, out var targetWindow);
+        var target = ResolveTarget(
+            manager, command, out var element, out var targetRect, out var targetWindow, out var raised);
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -337,6 +338,7 @@ internal static class Program
                 {
                     ok = true,
                     started = true,
+                    raised = raised,
                     pid = Environment.ProcessId,
                     pointed = new { x = global.X, y = global.Y },
                     element = ElementJson(element),
@@ -406,6 +408,7 @@ internal static class Program
                 Out(JsonSerializer.Serialize(new
                 {
                     ok = true,
+                    raised = raised,
                     pointed = new { x = global.X, y = global.Y },
                     element = ElementJson(element),
                     monitor = monitorForTarget.Index + 1,
@@ -451,6 +454,28 @@ internal static class Program
         }
 
         return notices.Distinct().ToArray();
+    }
+
+    /// <summary>
+    /// <c>--raise</c>：把目标窗口置前。失败不算致命（指着一个被挡住的窗口很难用，
+    /// 但不能因此让裸命令失败），只在 stderr 提醒一次，并让 <c>--json</c> 带上
+    /// <c>raised: false</c>。返回 null 表示根本没尝试置前。
+    /// </summary>
+    private static bool? TryRaiseTarget(IntPtr window, PointerCommand command)
+    {
+        if (window == IntPtr.Zero || !command.Behavior.Raise || command.DryRun) return null;
+
+        if (WindowFinder.TryRaise(window)) return true;
+
+        if (!command.Json)
+        {
+            Err(Lang.T(
+                "置前失败（Windows 前台锁）：目标窗口可能停在其它窗口后面，箭头也会被挡住。",
+                "Could not bring the target window to the front (Windows foreground lock); "
+                + "it and the arrow may stay behind other windows."));
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -527,13 +552,17 @@ internal static class Program
     /// 只有 1x1 的点），供 <c>--until-click</c> 判断点击落在了哪里。</para>
     /// <para><paramref name="targetWindow"/> 是目标所在的顶层窗口句柄（<c>--at</c> / <c>--rect</c> /
     /// <c>--mouse</c> 没有窗口，返回 <see cref="IntPtr.Zero"/>），供 <c>--flash</c> 闪任务栏按钮。</para>
+    /// <para><paramref name="raised"/> 是 <c>--raise</c> 的结果：null 表示没有尝试置前
+    /// （没开 --raise、--dry-run 或目标没有窗口），false 表示尝试了但被前台锁挡住。</para>
     /// </summary>
     private static Point ResolveTarget(
         OverlayManager manager, PointerCommand command,
-        out ElementInfo? element, out Rectangle targetRect, out IntPtr targetWindow)
+        out ElementInfo? element, out Rectangle targetRect, out IntPtr targetWindow,
+        out bool? raised)
     {
         element = null;
         targetWindow = IntPtr.Zero;
+        raised = null;
         var target = command.Target;
 
         switch (target.Kind)
@@ -569,11 +598,8 @@ internal static class Program
                               $"No window matches '{target.WindowQuery}'. "
                               + $"Visible processes: {DescribeVisibleProcesses()}. "
                               + "Use agentpointer elements --app <name> to list what a window exposes."));
-                if (command.Behavior.Raise && !command.DryRun)
-                {
-                    // 置前失败不算致命——指着一个被挡住的窗口很难用，但不能因此让命令失败
-                    WindowFinder.TryRaise(match.Handle);
-                }
+                // 置前失败不算致命——指着一个被挡住的窗口很难用，但不能因此让命令失败
+                raised = TryRaiseTarget(match.Handle, command);
 
                 targetRect = match.Bounds;
                 targetWindow = match.Handle;
@@ -595,10 +621,7 @@ internal static class Program
                 var window = ResolveElementWindow(command);
 
                 // 与窗口目标一致：只在显式 --raise 时置前，置前失败不算致命
-                if (command.Behavior.Raise && !command.DryRun)
-                {
-                    WindowFinder.TryRaise(window.Handle);
-                }
+                raised = TryRaiseTarget(window.Handle, command);
 
                 element = ElementFinder.Find(window.Handle, target.ElementQuery!, target.Role, window.Title);
 
@@ -894,10 +917,7 @@ internal static class Program
     {
         var window = ResolveElementWindow(command);
 
-        if (command.Behavior.Raise && !command.DryRun)
-        {
-            WindowFinder.TryRaise(window.Handle);
-        }
+        var raised = TryRaiseTarget(window.Handle, command);
 
         var all = ElementFinder.Collect(window.Handle);
 
@@ -919,6 +939,7 @@ internal static class Program
             Out(JsonSerializer.Serialize(new
             {
                 ok = true,
+                raised = raised,
                 window = new { title = window.Title, process = window.ProcessName },
                 count = elements.Count,
                 elements = elements.Select(e => new
