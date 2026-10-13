@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows.Automation;
 using AgentPointer.Core.Cli;
 using AgentPointer.Core.Targeting;
@@ -9,6 +10,12 @@ namespace AgentPointer.Cli.Targeting;
 /// （截断时列表仍是一份可用的部分结果）。
 /// </summary>
 internal readonly record struct ElementScan(IReadOnlyList<ElementInfo> Elements, bool Truncated);
+
+/// <summary>
+/// 一次元素查找的结果：命中的元素，以及产生它的那次扫描是否被截断
+/// （截断时必须告诉调用方，否则 agent 会把"没扫到"当成"不存在"）。
+/// </summary>
+internal readonly record struct ElementFindResult(ElementInfo Element, bool Truncated);
 
 /// <summary>
 /// 用 UI Automation 收集窗口里的可访问性元素，并交给平台无关的
@@ -194,16 +201,16 @@ internal static class ElementFinder
     /// 按 label（可选的 role 限定）找元素，找不到就抛 <see cref="TargetNotFoundException"/>，
     /// 消息里带上最相近的候选名，让 agent 自己改查询串。
     /// </summary>
-    public static ElementInfo Find(IntPtr hwnd, string label, string? role, string? windowTitle = null)
+    public static ElementFindResult Find(IntPtr hwnd, string label, string? role, string? windowTitle = null)
     {
-        var elements = Collect(hwnd);
-        var ranked = ElementMatcher.Rank(elements, label, role);
+        var scan = CollectDetailed(hwnd);
+        var ranked = ElementMatcher.Rank(scan.Elements, label, role);
         if (ranked.Count > 0)
         {
-            return ranked[0];
+            return new ElementFindResult(ranked[0], scan.Truncated);
         }
 
-        var suggestions = ElementMatcher.Suggestions(elements, label);
+        var suggestions = ElementMatcher.Suggestions(scan.Elements, label);
         var hint = suggestions.Count > 0
             ? Lang.T(
                 $"相近的元素：{string.Join("、", suggestions)}。 ",
@@ -211,6 +218,13 @@ internal static class ElementFinder
             : Lang.T(
                 "该窗口没有暴露可用于匹配的元素。 ",
                 "The window exposes no element to match. ");
+
+        // 搜索被截断时的"没找到"和一个扫全了的"没找到"完全不是一回事：
+        // 必须说清楚，否则 agent 会去改一个本来正确的 label。
+        if (scan.Truncated)
+        {
+            hint = TruncatedNote() + hint;
+        }
 
         var window = string.IsNullOrWhiteSpace(windowTitle)
             ? Lang.T("前台窗口", "the foreground window")
@@ -220,6 +234,21 @@ internal static class ElementFinder
             $"未找到元素 \"{label}\"（窗口 \"{window}\"）。{hint}用 agentpointer elements --app ... 查看全部。",
             $"No element \"{label}\" in window \"{window}\". {hint}"
             + "Run agentpointer elements --app ... to list them all."));
+    }
+
+    /// <summary>
+    /// "搜索被截断"的提示语。秒数与上限都从真实预算里取，不写死在文案里。
+    /// </summary>
+    private static string TruncatedNote()
+    {
+        var seconds = DefaultTimeout.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
+
+        return Lang.T(
+            $"UI Automation 搜索在 {seconds} 秒后被截断（超时，或达到 {DefaultMaxCount} 个元素的上限），"
+            + "元素可能存在。用 --app App:title 缩小窗口范围，或运行 agentpointer elements --app X 查看清单。 ",
+            $"The UI Automation search was cut off after {seconds} s (timeout, or the "
+            + $"{DefaultMaxCount}-element cap), so the element may exist. Narrow the window with "
+            + "--app App:title, or run agentpointer elements --app X to see what is there. ");
     }
 
     private static ElementInfo? TryDescribe(AutomationElement element)

@@ -143,11 +143,10 @@ internal static class Program
 
             if (resolved is not null)
             {
-                var bounds = resolved.Bounds;
-                environment[ResolvedTarget.RectVariable] = $"{bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}";
-                environment[ResolvedTarget.ElementVariable] = JsonSerializer.Serialize(resolved.Element, JsonOptions);
-                environment[ResolvedTarget.RaisedVariable] =
-                    resolved.Raised is { } didRaise ? (didRaise ? "true" : "false") : string.Empty;
+                foreach (var (key, value) in ResolvedTargetCodec.Encode(resolved))
+                {
+                    environment[key] = value;
+                }
             }
             environmentBlock = System.Runtime.InteropServices.Marshal.StringToHGlobalUni(
                 string.Join("\0", environment.OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
@@ -232,75 +231,19 @@ internal static class Program
 
     /// <summary>
     /// <c>start --element</c>：在父进程里把整套 UI Automation 解析做完（置前也在这里），
-    /// 结果经环境变量交给后台子进程，见 <see cref="ResolvedTarget"/>。
+    /// 结果经环境变量交给后台子进程，见 <see cref="ResolvedTargetCodec"/>。
     /// </summary>
-    private static ResolvedElement ResolveElementForChild(PointerCommand command)
+    private static ResolvedTarget ResolveElementForChild(PointerCommand command)
     {
         var window = ResolveElementWindow(command);
         var raised = TryRaiseTarget(window.Handle, command);
-        var element = ElementFinder.Find(window.Handle, command.Target.ElementQuery!, command.Target.Role, window.Title);
+        var found = ElementFinder.Find(window.Handle, command.Target.ElementQuery!, command.Target.Role, window.Title);
+        var element = found.Element;
 
-        return new ResolvedElement(
-            element,
-            new Rectangle(element.X, element.Y, element.Width, element.Height),
-            raised);
-    }
-
-    /// <summary>父进程解析好的元素目标。</summary>
-    private sealed record ResolvedElement(ElementInfo Element, Rectangle Bounds, bool? Raised);
-
-    /// <summary>
-    /// 父进程把已解析的元素目标交给 <c>--keep-alive</c> 子进程用的环境变量。
-    /// 名字只在本程序内部使用，与 <see cref="ShownSignal"/> 的两个事件变量同一路数。
-    /// </summary>
-    private static class ResolvedTarget
-    {
-        public const string RectVariable = "AGENTPOINTER_RESOLVED_RECT";
-        public const string ElementVariable = "AGENTPOINTER_RESOLVED_ELEMENT";
-        public const string RaisedVariable = "AGENTPOINTER_RESOLVED_RAISED";
-
-        /// <summary>全局物理像素矩形；没有就返回 false，子进程自己去做 UIA。</summary>
-        public static bool TryRead(out Rectangle rect, out ElementInfo? element, out bool? raised)
-        {
-            rect = Rectangle.Empty;
-            element = null;
-            raised = null;
-
-            var raw = Environment.GetEnvironmentVariable(RectVariable);
-            if (string.IsNullOrWhiteSpace(raw)) return false;
-
-            var parts = raw.Split(',');
-            if (parts.Length != 4 ||
-                !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var x) ||
-                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var y) ||
-                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) ||
-                !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
-            {
-                return false;
-            }
-
-            rect = new Rectangle(x, y, w, h);
-
-            var elementJson = Environment.GetEnvironmentVariable(ElementVariable);
-            if (!string.IsNullOrWhiteSpace(elementJson))
-            {
-                try
-                {
-                    element = JsonSerializer.Deserialize<ElementInfo>(elementJson);
-                }
-                catch (JsonException)
-                {
-                    // 解析不出来只影响 --json 里回显的元素，目标本身照旧
-                }
-            }
-
-            if (bool.TryParse(Environment.GetEnvironmentVariable(RaisedVariable), out var didRaise))
-            {
-                raised = didRaise;
-            }
-
-            return true;
-        }
+        // 窗口句柄必须一起下发：子进程手里的目标除了坐标还有一个 HWND，
+        // --flash（以及以后任何按窗口干活的行为）都靠它。
+        return new ResolvedTarget(
+            element.X, element.Y, element.Width, element.Height, window.Handle, element, raised, found.Truncated);
     }
 
     private static int RunPoint(PointerCommand command)
@@ -317,7 +260,19 @@ internal static class Program
 
         var target = ResolveTarget(
             manager, command, out var element, out var targetRect, out var targetWindow, out var raised,
-            out var preResolved);
+            out var preResolved, out var truncated);
+
+        // 命中了也可能只是"在截断前先撞上了一个"：提醒一句，别让 agent 以为清单是完整的。
+        if (truncated && !command.Json)
+        {
+            Err(Lang.T(
+                "UI Automation 搜索被截断，可能还有没扫到的元素。"
+                + "用 --app App:title 缩小窗口范围，或 agentpointer elements --app X 查看清单。",
+                "The UI Automation search was cut off, so more elements may exist. "
+                + "Narrow the window with --app App:title, or list them with agentpointer elements --app X."));
+        }
+
+        var truncatedJson = truncated ? (bool?)true : null;
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -373,7 +328,8 @@ internal static class Program
         if (command.DryRun)
         {
             return Report(command, global,
-                Lang.T("dry-run：本来会指向这里", "dry-run: would point here"), monitorForTarget.Index + 1);
+                Lang.T("dry-run：本来会指向这里", "dry-run: would point here"), monitorForTarget.Index + 1,
+                truncatedJson);
         }
 
         var notices = IneffectiveNotice(command);
@@ -438,6 +394,7 @@ internal static class Program
                     values = values.Count > 0 ? values : null,
                     monitor = monitorForTarget.Index + 1,
                     ineffective = notices,
+                    truncated = truncatedJson,
                 }, JsonOptions));
                 ShownSignal.Signal();
                 Environment.SetEnvironmentVariable(ShownSignal.ResultEnvironmentVariable, null);
@@ -508,6 +465,7 @@ internal static class Program
                     text = sign.DisplayText,
                     values = values.Count > 0 ? values : null,
                     ineffective = IneffectiveNotice(command),
+                    truncated = truncatedJson,
                 }, JsonOptions));
             }
 
@@ -648,16 +606,19 @@ internal static class Program
     /// （没开 --raise、--dry-run 或目标没有窗口），false 表示尝试了但被前台锁挡住。</para>
     /// <para><paramref name="preResolved"/> 为 true 表示目标矩形是父进程算好的（<c>start
     /// --element</c>），这里一次 UI Automation 都没有发。</para>
+    /// <para><paramref name="truncated"/> 为 true 表示这次元素搜索撞上了超时或数量上限，
+    /// 结果可能不完整（命中与否都算）。</para>
     /// </summary>
     private static Point ResolveTarget(
         OverlayManager manager, PointerCommand command,
         out ElementInfo? element, out Rectangle targetRect, out IntPtr targetWindow,
-        out bool? raised, out bool preResolved)
+        out bool? raised, out bool preResolved, out bool truncated)
     {
         element = null;
         targetWindow = IntPtr.Zero;
         raised = null;
         preResolved = false;
+        truncated = false;
         var target = command.Target;
 
         switch (target.Kind)
@@ -714,16 +675,18 @@ internal static class Program
             case TargetKind.Element:
             {
                 // start 的父进程可能已经把 UI Automation 跑完了（见 ResolveElementForChild）：
-                // 直接用它留下的全局矩形，子进程一次 UIA 调用都不用发。
-                if (ResolvedTarget.TryRead(out var resolvedRect, out var resolvedElement, out var resolvedRaised))
+                // 直接用它留下的全局矩形和窗口句柄，子进程一次 UIA 调用都不用发。
+                if (ResolvedTargetCodec.TryDecode(Environment.GetEnvironmentVariable, out var resolved))
                 {
-                    element = resolvedElement;
-                    targetRect = resolvedRect;
-                    raised = resolvedRaised;
+                    element = resolved.Element;
+                    targetRect = new Rectangle(resolved.X, resolved.Y, resolved.Width, resolved.Height);
+                    raised = resolved.Raised;
+                    targetWindow = resolved.Window;
+                    truncated = resolved.Truncated;
                     preResolved = true;
                     return new Point(
-                        resolvedRect.Left + resolvedRect.Width / 2,
-                        resolvedRect.Top + resolvedRect.Height / 2);
+                        targetRect.Left + targetRect.Width / 2,
+                        targetRect.Top + targetRect.Height / 2);
                 }
 
                 var window = ResolveElementWindow(command);
@@ -731,7 +694,9 @@ internal static class Program
                 // 与窗口目标一致：只在显式 --raise 时置前，置前失败不算致命
                 raised = TryRaiseTarget(window.Handle, command);
 
-                element = ElementFinder.Find(window.Handle, target.ElementQuery!, target.Role, window.Title);
+                var found = ElementFinder.Find(window.Handle, target.ElementQuery!, target.Role, window.Title);
+                element = found.Element;
+                truncated = found.Truncated;
 
                 // 元素包围盒走与 --rect 完全相同的渲染路径（取中心）
                 var bounds = new Rectangle(element.X, element.Y, element.Width, element.Height);
@@ -1142,7 +1107,7 @@ internal static class Program
         return exitCode;
     }
 
-    private static int Report(PointerCommand command, Point target, string what, int monitorIndex)
+    private static int Report(PointerCommand command, Point target, string what, int monitorIndex, bool? truncated)
     {
         if (!command.Json)
         {
@@ -1160,6 +1125,7 @@ internal static class Program
             monitor = monitorIndex,
             coordinateSpace = "physical-pixels",
             ineffective = IneffectiveNotice(command),
+            truncated = truncated,
         }, JsonOptions));
 
         return ExitCode.Ok;
