@@ -10,8 +10,9 @@ namespace AgentPointer.Cli;
 /// <summary>
 /// 安装 Claude Code / Codex 的技能文件，并可把 CLI 所在目录加进用户 PATH。
 ///
-/// <para>默认<strong>不覆盖</strong>已存在且内容不同的文件：目录可能是用户改过的，
-/// 静默盖掉比"没装上"更糟。要覆盖得显式给 <c>--force</c>。</para>
+/// <para>缺的文件永远补上；内容只差嵌入的命令行路径（exe 搬过家）算更新，也不需要 <c>--force</c>。
+/// 只有用户真改过内容时才<strong>不覆盖</strong>，要覆盖得显式给 <c>--force</c>：
+/// 静默盖掉用户改过的文件比"没装上"更糟。判断逻辑在 <see cref="SkillPlan"/> 里。</para>
 /// </summary>
 internal static class SkillInstaller
 {
@@ -52,21 +53,52 @@ internal static class SkillInstaller
             new SkillFile(Path.Combine("agents", "openai.yaml"), ReadResource("AgentPointer.Skill.openai.yaml")),
         };
 
-        var skills = directories.Select(directory =>
+        var reports = new List<SkillReport>(directories.Count);
+        foreach (var directory in directories)
         {
-            var (status, installed, current, error) = Inspect(directory.Directory, files, command.Force);
+            var (inputs, readError) = ReadInputs(directory.Directory, files);
+            var plan = SkillPlan.Plan(inputs, command.Force);
 
-            // 只有"新装"和"强制覆盖"才落盘；up-to-date 与 exists 都保持文件原样
-            if (!dryRun && status is "installed" or "updated")
+            if (plan.Status == "error")
+            {
+                // 读不出来就报权限错误：不能在不确定的情况下覆盖，更不能假装装好了
+                Console.Error.WriteLine(Lang.T(
+                    $"读不了技能目录 {directory.Directory}：{readError}",
+                    $"Could not read the skill directory {directory.Directory}: {readError}"));
+                return Core.ExitCode.PermissionMissing;
+            }
+
+            if (!dryRun)
             {
                 foreach (var file in files)
                 {
-                    Write(directory.Directory, file.RelativePath, file.Content);
+                    if (plan.ActionFor(file.RelativePath) != SkillFileAction.Write) continue;
+
+                    try
+                    {
+                        Write(directory.Directory, file.RelativePath, file.Content);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        var path = Path.Combine(directory.Directory, file.RelativePath);
+                        Console.Error.WriteLine(Lang.T(
+                            $"写不了技能文件 {path}：{ex.Message}",
+                            $"Could not write the skill file {path}: {ex.Message}"));
+                        return Core.ExitCode.PermissionMissing;
+                    }
                 }
             }
 
-            return new SkillReport(directory.Agent, directory.Directory, installed, current, status, error);
-        }).ToArray();
+            reports.Add(new SkillReport(
+                directory.Agent,
+                directory.Directory,
+                plan.Installed && !dryRun,
+                plan.Status == "up-to-date",
+                plan.Status,
+                null));
+        }
+
+        var skills = reports.ToArray();
 
         var pathStatus = "skipped";
         if (command.AddPath)
@@ -91,7 +123,8 @@ internal static class SkillInstaller
             {
                 ok = true,
                 dryRun,
-                installed = !dryRun,
+                // 顶层 installed 只有在每个目录都真的写上/已是最新时才为 true
+                installed = !dryRun && skills.All(skill => skill.status is "installed" or "updated" or "up-to-date"),
                 directories = directories.Select(d => d.Directory),
                 skills,
                 path = pathStatus,
@@ -112,50 +145,37 @@ internal static class SkillInstaller
     private sealed record SkillReport(
         string agent, string directory, bool installed, bool current, string status, string? error);
 
-    /// <summary>
-    /// 探测一个目标目录的计划状态：
-    /// <c>installed</c> 文件都不在 / <c>up-to-date</c> 内容完全一致 /
-    /// <c>exists</c> 有差异且没给 --force / <c>updated</c> 有差异且给了 --force。
-    /// </summary>
-    private static (string Status, bool Installed, bool Current, string? Error) Inspect(
-        string directory, SkillFile[] files, bool force)
+    /// <summary>读每个文件的现状（内容或读取失败原因），交给 <see cref="SkillPlan"/> 决定写不写。</summary>
+    private static (SkillPlan.FileInput[] Inputs, string? Error) ReadInputs(string directory, SkillFile[] files)
     {
-        try
+        var inputs = new SkillPlan.FileInput[files.Length];
+        string? error = null;
+
+        for (var index = 0; index < files.Length; index++)
         {
-            var installed = File.Exists(Path.Combine(directory, "SKILL.md"));
-            var missing = 0;
-            var identical = 0;
-
-            foreach (var file in files)
+            var file = files[index];
+            var path = Path.Combine(directory, file.RelativePath);
+            if (!File.Exists(path))
             {
-                var path = Path.Combine(directory, file.RelativePath);
-                if (!File.Exists(path))
-                {
-                    missing++;
-                    continue;
-                }
-
-                if (Same(File.ReadAllText(path, Encoding.UTF8), file.Content)) identical++;
+                inputs[index] = new SkillPlan.FileInput(file.RelativePath, file.Content, false, null);
+                continue;
             }
 
-            var current = identical == files.Length;
-            var status = missing == files.Length ? "installed"
-                : current ? "up-to-date"
-                : force ? "updated"
-                : "exists";
+            try
+            {
+                inputs[index] = new SkillPlan.FileInput(
+                    file.RelativePath, file.Content, true, File.ReadAllText(path, Encoding.UTF8));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 读不动就报权限错误：宁可让调用方失败，也不要在不确定的情况下覆盖
+                error ??= ex.Message;
+                inputs[index] = new SkillPlan.FileInput(file.RelativePath, file.Content, true, null, ex.Message);
+            }
+        }
 
-            return (status, installed, current, null);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // 读不动就当作"已存在且不认识"：宁可跳过，也不要在不确定的情况下覆盖
-            return ("exists", false, false, ex.Message);
-        }
+        return (inputs, error);
     }
-
-    /// <summary>换行差异不算差异：git autocrlf 之后仍应判为 up-to-date。</summary>
-    private static bool Same(string left, string right) =>
-        left.Replace("\r\n", "\n") == right.Replace("\r\n", "\n");
 
     private static void Write(string directory, string relativePath, string content)
     {
@@ -194,11 +214,11 @@ internal static class SkillInstaller
                 "up-to-date" => Lang.T($"已是最新：{where}", $"already up to date: {where}"),
                 _ => dryRun
                     ? Lang.T(
-                        $"已存在且内容不同，将跳过：{where}（要覆盖需 --force）",
-                        $"exists with different content, will skip: {where} (rerun with --force to overwrite)")
+                        $"内容不同的文件将跳过，缺失的仍会写入：{where}（要覆盖需 --force）",
+                        $"files that differ will be skipped, missing ones are still written: {where} (rerun with --force to overwrite)")
                     : Lang.T(
-                        $"已存在且内容不同，已跳过：{where}（确认要覆盖时重跑并加 --force）",
-                        $"exists with different content, skipped: {where} (rerun with --force to overwrite)"),
+                        $"内容不同的文件已跳过，缺失的已写入：{where}（确认要覆盖时重跑并加 --force）",
+                        $"files that differ were skipped, missing ones were written: {where} (rerun with --force to overwrite)"),
             };
         }
 

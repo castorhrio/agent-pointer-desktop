@@ -10,7 +10,9 @@ focus, needs no permission, and never clicks, types or approves anything. Point 
 a line in the terminal is easy to miss. Keep the task's existing authorization boundaries.
 
 The installer substitutes the executable's absolute path for `__AGENTPOINTER_COMMAND__`. After moving
-or reinstalling the executable, run `agentpointer install-skill` again.
+or reinstalling the executable, run `agentpointer install-skill` again: missing files are always
+written and a skill whose only difference is that path is updated, both without `--force`. `--force`
+overwrites skill files you edited yourself, so use it deliberately.
 
 ```powershell
 __AGENTPOINTER_COMMAND__ doctor --json
