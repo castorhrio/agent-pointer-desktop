@@ -56,7 +56,8 @@ internal static class Program
 
         if (!parse.Ok)
         {
-            return Fail(parse.ExitCode, parse.Error ?? "未知错误", args.Contains("--json"));
+            return Fail(parse.ExitCode, parse.Error
+                ?? Lang.T("未知错误", "Unknown error"), args.Contains("--json"));
         }
 
         var command = parse.Command!;
@@ -123,7 +124,8 @@ internal static class Program
             // 子进程：UIA 完全不进那 5 秒，也就不可能再把它撑爆。
             var resolved = command.Target.Kind == TargetKind.Element ? ResolveElementForChild(command) : null;
 
-            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法确定程序路径。");
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException(
+                Lang.T("无法确定程序路径。", "Could not determine the executable path."));
             var arguments = new List<string> { executable };
             if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
             {
@@ -194,7 +196,7 @@ internal static class Program
                 if (notices.Length > 0)
                 {
                     Err(Lang.T("以下参数暂不生效：", "These arguments have no effect yet: ")
-                        + string.Join(Lang.T("、", ", "), notices));
+                        + Lang.Join(notices));
                 }
             }
             Out(command.Json
@@ -378,7 +380,7 @@ internal static class Program
         if (!command.Json && notices.Length > 0)
         {
             Err(Lang.T("以下参数暂不生效：", "These arguments have no effect yet: ")
-                + string.Join(Lang.T("、", ", "), notices));
+                + Lang.Join(notices));
         }
 
         var sign = new SignContent(command.Text, SafeParseColor(command.Look.Color));
@@ -422,7 +424,8 @@ internal static class Program
                     Thread.Sleep(10);
                 }
 
-                if (form.IsEntering) throw new InvalidOperationException("箭头入场动画未完成。");
+                if (form.IsEntering) throw new InvalidOperationException(
+                    Lang.T("箭头入场动画未完成。", "The arrow's entrance animation did not finish."));
                 Out(JsonSerializer.Serialize(new
                 {
                     ok = true,
@@ -738,13 +741,13 @@ internal static class Program
             }
 
             default:
-                throw new TargetNotFoundException("没有可用的目标");
+                throw new TargetNotFoundException(Lang.T("没有可用的目标。", "No usable target."));
         }
     }
 
     /// <summary>上游语义：exit 3 的消息要列出当前存在什么，帮 agent 自己修正。</summary>
     private static string DescribeVisibleProcesses() =>
-        string.Join("、", WindowFinder.Enumerate()
+        string.Join(Lang.ListSep, WindowFinder.Enumerate()
             .Select(w => w.ProcessName)
             .OfType<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)

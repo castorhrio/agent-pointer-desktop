@@ -26,6 +26,12 @@ public sealed record ParseResult
 
     public static ParseResult BadInput(string error) => Failure(Core.ExitCode.BadInput, error);
 
+    /// <summary>
+    /// 功能在 Windows 版尚未实现（<c>--follow</c> / <c>--png</c>）。退出码 5，
+    /// 调用方据此去掉参数重试，而不是以为它已经生效。
+    /// </summary>
+    public static ParseResult Unsupported(string error) => Failure(Core.ExitCode.Unsupported, error);
+
     public static ParseResult Help() =>
         new() { Ok = true, ExitCode = Core.ExitCode.Ok, HelpRequested = true };
 

@@ -38,6 +38,15 @@ public static class Lang
     /// <summary>按当前语言二选一：<paramref name="zh"/> 给中文，<paramref name="en"/> 给英文。</summary>
     public static string T(string zh, string en) => _isZh ? zh : en;
 
+    /// <summary>列表分隔符：中文顿号，英文逗号加空格。</summary>
+    public static string ListSep => _isZh ? "、" : ", ";
+
+    /// <summary>分句分隔符：中文全角分号，英文分号加空格。</summary>
+    public static string ClauseSep => _isZh ? "；" : "; ";
+
+    /// <summary>按当前语言连接一组条目（列表用 <see cref="ListSep"/>）。</summary>
+    public static string Join(IEnumerable<string> items) => string.Join(ListSep, items);
+
     /// <summary>归一化语言取值：en / zh，大小写无关，也接受 en-US / zh_CN 这类区域写法。</summary>
     public static bool TryNormalize(string? raw, out string? normalized)
     {

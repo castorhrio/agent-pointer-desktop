@@ -1,5 +1,6 @@
 using System.Drawing;
 using AgentPointer.Cli.Targeting;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 
 namespace AgentPointer.Cli.Overlay;
@@ -20,8 +21,10 @@ internal sealed class OverlayManager : IDisposable
         _monitors = MonitorService.Enumerate().ToList();
         if (_monitors.Count == 0)
         {
-            throw new OverlayUnavailableException(
-                "枚举不到任何显示器。可能处于锁屏或 UAC 安全桌面，此时无法绘制覆盖层。");
+            throw new OverlayUnavailableException(Lang.T(
+                "枚举不到任何显示器。可能处于锁屏或 UAC 安全桌面，此时无法绘制覆盖层。",
+                "No display could be enumerated. The desktop may be locked or a UAC secure desktop "
+                + "may be up, in which case no overlay can be drawn."));
         }
     }
 
@@ -46,7 +49,9 @@ internal sealed class OverlayManager : IDisposable
 
         if (local.X < 0 || local.X >= monitor.Bounds.Width || local.Y < 0 || local.Y >= monitor.Bounds.Height)
         {
-            throw new TargetNotFoundException($"局部坐标 ({local.X}, {local.Y}) 不在显示器 #{index + 1} 内。");
+            throw new TargetNotFoundException(Lang.T(
+                $"局部坐标 ({local.X}, {local.Y}) 不在显示器 #{index + 1} 内。",
+                $"The local coordinate ({local.X}, {local.Y}) is not inside display #{index + 1}."));
         }
 
         global = new Point(monitor.Bounds.Left + local.X, monitor.Bounds.Top + local.Y);
@@ -56,7 +61,10 @@ internal sealed class OverlayManager : IDisposable
     /// <summary>目标必须落在真实显示器内；虚拟桌面包围盒中的空隙也不算屏幕。</summary>
     public MonitorInfo MonitorFor(Point global) =>
         MonitorService.FromPoint(global, _monitors)
-        ?? throw new TargetNotFoundException($"坐标 ({global.X}, {global.Y}) 不在任何显示器内。请用 doctor 查看屏幕范围。");
+        ?? throw new TargetNotFoundException(Lang.T(
+            $"坐标 ({global.X}, {global.Y}) 不在任何显示器内。请用 doctor 查看屏幕范围。",
+            $"The coordinate ({global.X}, {global.Y}) is not on any display. "
+            + "Use doctor to see the screen bounds."));
 
     /// <summary>拿到（或懒创建）承载该显示器的窗口。</summary>
     public OverlayForm WindowFor(MonitorInfo monitor)

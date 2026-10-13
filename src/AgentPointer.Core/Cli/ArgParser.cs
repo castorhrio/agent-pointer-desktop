@@ -45,8 +45,11 @@ public static class ArgParser
         "--peekaboo", "--snapshot",
     };
 
-    /// <summary>上游支持、Windows 版 v1 未实现的行为参数。接受但标记为未生效。</summary>
-    private static readonly HashSet<string> IneffectiveOnWindows = new(StringComparer.Ordinal)
+    /// <summary>
+    /// 上游支持、Windows 版尚未实现的行为参数。不是静默忽略：直接以退出码 5
+    /// （功能不支持）报错，让 agent 去掉这个参数重试，而不是以为它已经生效。
+    /// </summary>
+    private static readonly HashSet<string> UnsupportedOnWindows = new(StringComparer.Ordinal)
     {
         "--follow", "--png",
     };
@@ -145,7 +148,6 @@ public static class ArgParser
         // 先把参数扫进字典，保持"后出现覆盖先出现"的直觉行为
         var flags = new Dictionary<string, string>(StringComparer.Ordinal);
         var switches = new HashSet<string>(StringComparer.Ordinal);
-        var ineffective = new List<string>();
         string? badFlag = null;
         string? badReason = null;
 
@@ -187,10 +189,17 @@ public static class ArgParser
                     $"'{name}' is macOS-only and has no Windows counterpart"));
             }
 
+            if (UnsupportedOnWindows.Contains(name))
+            {
+                return ParseResult.Unsupported(Lang.T(
+                    $"'{name}' 在 Windows 上尚未实现，本次没有绘制任何东西。请去掉该参数后重试。",
+                    $"'{name}' is not supported on Windows yet, so nothing was drawn. "
+                    + "Drop the argument and retry."));
+            }
+
             if (BoolFlags.Contains(name))
             {
                 switches.Add(name);
-                if (IneffectiveOnWindows.Contains(name)) ineffective.Add(name);
                 continue;
             }
 
@@ -229,14 +238,13 @@ public static class ArgParser
                 $"Argument '{badFlag}' {badReason}. {hint}"));
         }
 
-        return Build(kind, flags, switches, ineffective, env);
+        return Build(kind, flags, switches, env);
     }
 
     private static ParseResult Build(
         CommandKind kind,
         Dictionary<string, string> flags,
         HashSet<string> switches,
-        List<string> ineffective,
         Func<string, string?> env)
     {
         // ---------- 外观 ----------
@@ -273,7 +281,7 @@ public static class ArgParser
         var border = ReadEnum(flags, "--border", enumErrors);
         if (enumErrors.Count > 0)
         {
-            return ParseResult.BadInput(string.Join("；", enumErrors));
+            return ParseResult.BadInput(string.Join(Lang.ClauseSep, enumErrors));
         }
 
         // ---------- 目标 ----------
@@ -406,9 +414,9 @@ public static class ArgParser
                 Flash = switches.Contains("--flash"),
                 Notify = switches.Contains("--notify"),
                 Png = switches.Contains("--png"),
-                IneffectiveFlags = ineffective
-                    .Concat(new[] { "--edge-color" }.Where(flags.ContainsKey))
-                    .Distinct().ToArray(),
+                // --edge-color 是唯一"接受但不生效"的外观参数；
+                // --follow / --png 这类不支持的选项一律走退出码 5（见 Parse）。
+                IneffectiveFlags = new[] { "--edge-color" }.Where(flags.ContainsKey).ToArray(),
             },
         };
 
@@ -725,9 +733,9 @@ public static class ArgParser
           --dry-run 只报告每个目标的计划状态，不写文件、不改 PATH
 
         尚不支持：
-          --follow --png --edge-color
-          --style ring|box、--shape zigzag|spiral、其他 anchor
-          上述外观/行为兼容参数会给出未生效提示，--json 中见 ineffective
+          --edge-color；--style ring|box、--shape zigzag|spiral、其他 anchor
+          以上外观兼容参数会给出未生效提示，--json 中见 ineffective
+          --follow / --png 尚未实现，直接返回退出码 5，请去掉参数后重试
           --peekaboo / --snapshot 是 macOS 专属，返回退出码 2
 
         示例：
@@ -824,9 +832,9 @@ public static class ArgParser
           --help --version
 
         Not supported yet:
-          --follow --png --edge-color
-          --style ring|box, --shape zigzag|spiral, other anchors
-          those compatibility flags are accepted and reported as ineffective in --json
+          --edge-color; --style ring|box, --shape zigzag|spiral, other anchors
+          those appearance flags are accepted and reported as ineffective in --json
+          --follow / --png are not implemented and exit with code 5; drop them and retry
           --peekaboo / --snapshot are macOS-only and exit with code 2
 
         Examples:

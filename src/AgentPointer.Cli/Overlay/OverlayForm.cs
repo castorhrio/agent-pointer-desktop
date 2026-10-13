@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using AgentPointer.Cli.Interop;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 using AgentPointer.Core.Rendering;
 
@@ -14,8 +15,7 @@ public sealed record SignContent(string? Text, ArrowColor Color)
     /// <summary>牌子实际绘制的文字：保留 <c>{{value}}</c> 记号，渲染器据此分出复制芯片。</summary>
     public string RenderText => !string.IsNullOrWhiteSpace(Text)
         ? Text.Trim()
-        : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh"
-            ? "请查看箭头所指位置" : "Look at the indicated location";
+        : Lang.T("请查看箭头所指位置", "Look at the indicated location");
 
     /// <summary>给 JSON / 朗读 / 通知看的纯文本：复制记号的花括号已经去掉。</summary>
     public string DisplayText =>

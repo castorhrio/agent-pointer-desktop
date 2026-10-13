@@ -475,20 +475,33 @@ public class ArgParserTests
 
     // ---------------- 兼容性：未实现的参数必须被接受 ----------------
 
+    /// <summary>
+    /// 回归用例：这些参数曾经"接受但不生效"，静默成功。现在必须退出码 5，
+    /// agent 才有机会按 skill 的指示去掉参数重试。
+    /// </summary>
     [Theory]
     [InlineData("--follow")]
     [InlineData("--png")]
-    public void Windows未实现的行为参数被接受而不报错(string flag)
+    public void Windows尚未实现的行为参数退出码为5(string flag)
     {
-        var r = Ok("point", "--at", "1,1", flag);
-        Assert.Contains(flag, r.Command!.Behavior.IneffectiveFlags);
+        var r = Parse("point", "--at", "1,1", flag);
+        Assert.False(r.Ok);
+        Assert.Equal(ExitCode.Unsupported, r.ExitCode);
+        Assert.Contains(flag, r.Error);
+        Assert.Contains("尚未实现", r.Error);
     }
 
     [Fact]
-    public void 未实现参数在json输出里可被识别()
+    public void 未实现参数即使带json也退出码为5()
     {
-        var r = Ok("point", "--at", "1,1", "--follow", "--png");
-        Assert.Equal(2, r.Command!.Behavior.IneffectiveFlags.Count);
+        Assert.Equal(ExitCode.Unsupported, Parse("start", "--at", "1,1", "--follow", "--json").ExitCode);
+        Assert.Equal(ExitCode.Unsupported, Parse("point", "--at", "1,1", "--png").ExitCode);
+    }
+
+    [Fact]
+    public void 不支持的参数不会把命令解析成成功()
+    {
+        Assert.Null(Parse("point", "--at", "1,1", "--follow").Command);
     }
 
     [Fact]

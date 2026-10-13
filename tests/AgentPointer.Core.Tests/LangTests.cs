@@ -101,6 +101,20 @@ public class LangTests : IDisposable
     }
 
     [Fact]
+    public void 列表与分句分隔符跟随语言()
+    {
+        Lang.Configure("zh", _ => null, CultureInfo.InvariantCulture);
+        Assert.Equal("、", Lang.ListSep);
+        Assert.Equal("；", Lang.ClauseSep);
+        Assert.Equal("a、b", Lang.Join(new[] { "a", "b" }));
+
+        Lang.Configure("en", _ => null, CultureInfo.InvariantCulture);
+        Assert.Equal(", ", Lang.ListSep);
+        Assert.Equal("; ", Lang.ClauseSep);
+        Assert.Equal("a, b", Lang.Join(new[] { "a", "b" }));
+    }
+
+    [Fact]
     public void parse的错误信息跟随lang开关()
     {
         var english = ArgParser.Parse(

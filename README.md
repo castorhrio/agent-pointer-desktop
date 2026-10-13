@@ -230,7 +230,7 @@ negative coordinates are valid. Display numbering starts at **1** in `doctor`, `
 - `--window` / `--mouse` already produce global coordinates. `--display N` filters their target display without translating again.
 - Targets outside every display, including gaps between displays, return exit code 3. `--dry-run` performs the same validation.
 - An invalid display number returns exit code 2.
-- `--logical` reads `--at` / `--rect` as logical (96-DPI, DPI-independent) coordinates relative to `--display N`, defaulting to the primary display, and converts them to global physical pixels using that monitor's scale and origin.
+- `--logical` reads `--at` / `--rect` as logical (96-DPI, DPI-independent) coordinates relative to `--display N`, defaulting to the primary display, and converts them to global physical pixels using that monitor's scale and origin. That scale belongs to that one display, not to upstream's global logical point space: on a mixed-DPI desktop convert each display's coordinates yourself instead of reusing macOS coordinates.
 
 Upstream macOS uses logical points, so its coordinates cannot be reused directly: pass `--logical` and the
 conversion happens for you. Without it, multiply display-local logical coordinates by the scale factor
@@ -253,7 +253,7 @@ set an owner when multiple agents need isolation.
 | 2 | Invalid arguments |
 | 3 | Target not found / outside displays |
 | 4 | Insufficient permissions / locked or UAC secure desktop |
-| 5 | Unsupported feature |
+| 5 | Unsupported feature (`--follow`, `--png`) |
 | 6 | Internal error / background startup failure |
 
 Guidance ends by itself (`endedBy` in JSON): `clicked` and `closed` for dismissals, `target-clicked`
@@ -269,8 +269,9 @@ Some option names, defaults, and visual rules follow bigarrow. Compatibility is 
 - `--element` matches UI Automation elements by label (plus optional `--role`); `elements` lists what a
   window exposes. Native apps and window chrome work as-is; browser page content needs Chrome or another
   browser started with accessibility enabled (`--force-renderer-accessibility`).
-- `--follow`, `--png`, and `--edge-color` are parsed only.
-  JSON lists them in `ineffective`; text output warns about them.
+- `--follow` and `--png` are not implemented on Windows and exit with code 5 ("not supported on
+  Windows yet"): drop the option and retry. `--edge-color` is parsed only: JSON lists it in
+  `ineffective` and text output warns about it.
 - `ring` / `box` fall back to `arrow`, and `zigzag` / `spiral` fall back to `bend`. Window anchors currently support only `center` / `title`.
   These free upstream styles are pending implementation. The project has no delivered paid features.
 - `--peekaboo` / `--snapshot` are macOS-specific and return exit code 2 on Windows.

@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Text;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 using AgentPointer.Core.Rendering;
 
@@ -320,8 +321,7 @@ internal static class OverlayRenderer
             frame.SignRect.Left + 5f * s, frame.SignRect.Bottom - 13f * s);
 
         var pad = PointerStyle.SignPadX * s;
-        var header = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh"
-            ? "AI 助手提示" : "AI ASSISTANT";
+        var header = Lang.T("AI 助手提示", "AI ASSISTANT");
         using var headerFont = ResolveFont(11f * s / (g.DpiX / 96f), HasCjk(header));
         using var headerBrush = new SolidBrush(Color.FromArgb(163, 177, 198));
         g.DrawString(header, headerFont, headerBrush, frame.SignRect.Left + pad,

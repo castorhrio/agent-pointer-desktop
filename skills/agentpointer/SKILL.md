@@ -50,7 +50,10 @@ __AGENTPOINTER_COMMAND__ doctor --json
 
 `(0,0)` is the primary display's top-left, secondary screens can have negative coordinates, and
 display numbers start at 1 in `doctor`, `--display` and JSON. With `--at` / `--rect`, `--display N`
-makes the coordinates local to that display; `--mouse` takes the current cursor position. Never guess:
+makes the coordinates local to that display; `--mouse` takes the current cursor position. `--logical`
+uses that one display's scale (96 DPI relative to `--display`, default primary), not upstream's global
+logical point space: on a mixed-DPI desktop convert each display yourself and do not reuse macOS
+coordinates. Never guess:
 verify with `doctor --json`, `elements --app X --match "file" --json` or `--dry-run --json` instead of
 inventing coordinates. `--dry-run` draws nothing and changes no focus.
 
@@ -86,13 +89,14 @@ only when the user asks for that integration.
 0 success, 2 invalid input, 3 target not found or outside all displays, 4 access denied / locked or
 UAC secure desktop, 5 unsupported feature, 6 internal error / background startup failure. On 2 fix
 the command; on 3 re-resolve the target; on 4 tell the human (the overlay cannot draw on the secure
-desktop); on 5 stop using that option. `doctor` checks styles and hit-test responses; it does not
-prove that a cross-process click reached a button.
+desktop); on 5 drop that option and retry without it (`--follow`, `--png`). `doctor` checks styles
+and hit-test responses; it does not prove that a cross-process click reached a button.
 
 ## Not supported on Windows
 
-`--follow`, `--png` and `--edge-color` are accepted but ineffective (JSON reports them under
-`ineffective`); `--style ring|box`, `--shape zigzag|spiral` and other anchors fall back to
+`--follow` and `--png` are not supported on Windows yet and exit 5: drop the option and retry.
+`--edge-color` is accepted but ineffective (JSON reports it under `ineffective`);
+`--style ring|box`, `--shape zigzag|spiral` and other anchors fall back to
 `arrow` / `bend` / `center|title`; `--peekaboo` / `--snapshot` are macOS-only and exit 2.
 
 Windows implementation of [bigarrow](https://github.com/franzenzenhofer/big-arrow-on-the-screen).
