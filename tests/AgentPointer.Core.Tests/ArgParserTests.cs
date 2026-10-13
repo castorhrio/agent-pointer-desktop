@@ -437,7 +437,6 @@ public class ArgParserTests
 
     [Theory]
     [InlineData("--follow")]
-    [InlineData("--until-click")]
     [InlineData("--say")]
     [InlineData("--png")]
     public void Windows未实现的行为参数被接受而不报错(string flag)
@@ -461,11 +460,41 @@ public class ArgParserTests
     }
 
     [Fact]
-    public void 未实现的关闭按钮与颜色明确标记()
+    public void 未实现的语音与边色明确标记()
     {
-        var r = Ok("point", "--at", "1,1", "--close-button", "--edge-color", "red");
-        Assert.Contains("--close-button", r.Command!.Behavior.IneffectiveFlags);
+        var r = Ok("point", "--at", "1,1", "--voice", "zira", "--edge-color", "red");
+        Assert.Contains("--voice", r.Command!.Behavior.IneffectiveFlags);
         Assert.Contains("--edge-color", r.Command.Behavior.IneffectiveFlags);
+    }
+
+    // ---------------- 点击收场：牌子本身、关闭按钮、点目标 ----------------
+
+    [Fact]
+    public void close_button与until_click已经生效且不再标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--close-button", "--until-click");
+        Assert.True(r.Command!.Behavior.CloseButton);
+        Assert.True(r.Command.Behavior.UntilClick);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void until_any_click被解析()
+    {
+        var r = Ok("point", "--at", "1,1", "--until-any-click");
+        Assert.True(r.Command!.Behavior.UntilAnyClick);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void hook只允许用于stop()
+    {
+        Assert.True(Ok("stop", "--hook").Command!.StopHook);
+
+        var r = Parse("point", "--at", "1,1", "--hook");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--hook", r.Error);
+        Assert.Equal(ExitCode.BadInput, Parse("doctor", "--hook").ExitCode);
     }
 
     [Fact]

@@ -31,6 +31,7 @@ Claude Code / Codex skill file status can be checked; complete tasks in a live a
 | Agent setup | Install Claude Code / Codex skills and check that files match the current app |
 | Focus preservation | Guidance keeps your current input focus; explicit `--raise` requests foreground activation |
 | Click-through | Mouse clicks reach the app beneath the overlay, verified across processes |
+| Click to dismiss | A click on the action label or the arrow shaft ends the guidance right away; the target stays click-through |
 | Multiple agents | Stop guidance by owner; overlays disappear when their owner exits |
 | Desktop and CLI | The panel handles setup and demos; agents can call the CLI independently |
 | System language | Follow the Windows display language by default, with manual English / Chinese choices |
@@ -154,7 +155,22 @@ agentpointer elements --app notepad --match "file" --json
 
 Appearance options include `--text`, `--from`, `--color`, `--size S|M|L`, `--shape bend|straight`,
 `--corners round|sharp`, `--border shadow|white-black|black`, `--border-color`, and `--text-color`.
-`--no-animation` disables entrance, breathing, and fade animations. See `agentpointer --help` for all options.
+`--close-button` puts a small × inside the action label. `--no-animation` disables entrance, breathing,
+and fade animations. See `agentpointer --help` for all options.
+
+A click on the action label or the arrow shaft ends the guidance immediately, without a round trip
+through the agent; the target itself and the space around the arrow head stay click-through.
+`--until-click` ends the guidance when the human clicks the target, `--until-any-click` when they
+click anywhere. Both watch the mouse without swallowing the click: it still reaches the app.
+
+Claude Code can clear leftover guidance the moment you send a new prompt:
+
+```json
+{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "agentpointer stop --hook"}]}]}}
+```
+
+`stop --hook` reads and ignores its stdin, prints nothing to stdout, and always exits 0, so it can
+never block a prompt. Without `--hook`, `stop` still reports what it did.
 
 ## Coordinates and displays
 
@@ -189,6 +205,9 @@ set an owner when multiple agents need isolation.
 | 5 | Unsupported feature |
 | 6 | Internal error / background startup failure |
 
+Guidance ends by itself (`endedBy` in JSON): `clicked` and `closed` for dismissals, `target-clicked`
+for `--until-click` / `--until-any-click`, plus the timeout, `stop`, and owner-exit reasons.
+
 `--json` returns structured results. Internal exceptions are reported separately from permission failures.
 Background startup has a 5-second limit; failure cleans up the child and returns an error.
 
@@ -199,8 +218,8 @@ Some option names, defaults, and visual rules follow bigarrow. Compatibility is 
 - `--element` matches UI Automation elements by label (plus optional `--role`); `elements` lists what a
   window exposes. Native apps and window chrome work as-is; browser page content needs Chrome or another
   browser started with accessibility enabled (`--force-renderer-accessibility`).
-- `--follow`, `--until-click`, `--until-any-click`, `--close-button`, `--say`, `--voice`,
-  `--png`, and edge/close color options are parsed only. JSON lists them in `ineffective`; text output warns about them.
+- `--follow`, `--say`, `--voice`, `--png`, and `--edge-color` are parsed only.
+  JSON lists them in `ineffective`; text output warns about them.
 - `ring` / `box` fall back to `arrow`, and `zigzag` / `spiral` fall back to `bend`. Window anchors currently support only `center` / `title`.
   These free upstream styles are pending implementation. The project has no delivered paid features.
 - `--peekaboo` / `--snapshot` are macOS-specific and return exit code 2 on Windows.
@@ -208,12 +227,17 @@ Some option names, defaults, and visual rules follow bigarrow. Compatibility is 
 
 ## Diagnostics and development
 
-The overlay uses `UpdateLayeredWindow` for per-pixel transparency and combines
-`WS_EX_LAYERED | WS_EX_TRANSPARENT` to pass mouse input to windows in other processes.
-`HTTRANSPARENT` supplements same-thread hit testing; its return value alone cannot prove click delivery.
-See [Microsoft's layered window documentation](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows).
+The overlay uses `UpdateLayeredWindow` for per-pixel transparency. Only the action label, the arrow
+shaft and the close button are opaque, so mouse input everywhere else reaches the window beneath.
+`WM_NCHITTEST` returns `HTCLIENT` inside those regions and `HTTRANSPARENT` outside, and
+`WS_EX_NOACTIVATE` plus `MA_NOACTIVATE` keep the focus where it was. `WS_EX_TRANSPARENT` is
+deliberately **not** set: it would stop the window from receiving mouse messages at all, and the
+label could never be clicked. See
+[Microsoft's layered window documentation](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows).
 
-`doctor` reports `ConfigurationValid` and `ClickDelivery: "not-tested"`. It checks styles and hit-test values.
+`doctor` reports `ConfigurationValid` and `ClickDelivery: "not-tested"`. It checks the window styles
+and probes the hit test at two meaningful points: the target must report `HTTRANSPARENT` and the
+action label must report `HTCLIENT`.
 Before release, click a button beneath the overlay in a separate test process to verify actual delivery.
 
 Console output follows the host encoding; background processes without a console use UTF-8.

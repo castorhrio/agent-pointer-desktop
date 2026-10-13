@@ -18,7 +18,39 @@ internal sealed record RenderFrame(
     LookSpec Look,
     ArrowMetrics Metrics,
     double DpiScale,
-    double AnimScale);
+    double AnimScale,
+    bool CloseButton = false);
+
+/// <summary>可点区域。<see cref="None"/> 表示该点继续穿透到下层应用。</summary>
+internal enum OverlayHit
+{
+    None,
+    Shaft,
+    Sign,
+    Close,
+}
+
+/// <summary>
+/// 可点区域缓存（窗口客户区坐标）。布局确定后算一次，动画期间不变。
+/// <see cref="Shaft"/> 是已按描边宽度外扩过的区域——用原始细路径判命中，用户几乎点不中。
+/// </summary>
+internal sealed class HitRegions : IDisposable
+{
+    public required GraphicsPath Shaft { get; init; }
+    public required RectangleF Sign { get; init; }
+    public RectangleF? Close { get; init; }
+
+    /// <summary>箭头尖端（目标点，窗口客户区坐标）。</summary>
+    public required PointF Target { get; init; }
+
+    /// <summary>
+    /// 尖端周围"永远穿透"的圆半径（约 1.5 倍箭头长度）。见
+    /// <see cref="OverlayRenderer.TargetExclusionRadiusFactor"/>。
+    /// </summary>
+    public required float TargetExclusionRadius { get; init; }
+
+    public void Dispose() => Shaft.Dispose();
+}
 
 /// <summary>
 /// 覆盖层渲染器。只负责"把一帧画进 Graphics"，不持有窗口、定时器等任何状态，
@@ -35,6 +67,18 @@ internal sealed record RenderFrame(
 /// </summary>
 internal static class OverlayRenderer
 {
+    /// <summary>--close-button 圆形 × 的直径（逻辑像素）。</summary>
+    internal const float CloseButtonDiameter = 22f;
+
+    /// <summary>
+    /// 尖端排除区半径 = 该系数 × 箭头长度。头部本身和紧挨头部的杆末段都落在圆里，
+    /// 那里点下去必须穿透给下层应用；1.5 倍的余量让"点在目标旁边一点"也不算我们的。
+    /// </summary>
+    internal const float TargetExclusionRadiusFactor = 1.5f;
+
+    /// <summary>× 与牌子边缘、正文之间的留白（逻辑像素）。</summary>
+    internal const float CloseButtonPadding = 8f;
+
     public static void DrawFrame(Graphics g, RenderFrame frame)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -147,6 +191,70 @@ internal static class OverlayRenderer
         }
 
         DrawSign(g, frame, fill, outline, border, s);
+
+        if (frame.CloseButton)
+        {
+            DrawCloseButton(g, frame, outline, s);
+        }
+    }
+
+    // ---------------- 命中区域 ----------------
+
+    /// <summary>
+    /// 计算可点区域（窗口客户区坐标）。<b>布局定下来后只调用一次</b>：
+    /// 入场/呼吸动画只改呈现缩放，不改命中判定。
+    ///
+    /// <para>只包含牌子、箭杆和关闭按钮：目标附近保持穿透，用户点到目标时点击照常送达下层应用。</para>
+    /// </summary>
+    internal static HitRegions ComputeHitRegions(RenderFrame frame, float scale)
+    {
+        var geometry = ArrowGeometry.Compute(frame, scale);
+
+        // 外扩一圈：细箭杆按原始路径判命中，实际上很难点中
+        var widened = (GraphicsPath)geometry.ShaftPath.Clone();
+        var hitWidth = geometry.ShaftWidth + 2 * MathF.Max(PointerStyle.OutlineWidth, 6f) * scale;
+        using (var pen = new Pen(Color.Black, hitWidth)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        })
+        {
+            widened.Widen(pen);
+        }
+
+        geometry.Dispose();
+
+        return new HitRegions
+        {
+            Shaft = widened,
+            Sign = frame.SignRect,
+            Close = frame.CloseButton ? CloseButtonRect(frame.SignRect, scale) : null,
+            Target = frame.Target,
+            TargetExclusionRadius = frame.Metrics.HeadLength * TargetExclusionRadiusFactor * scale,
+        };
+    }
+
+    /// <summary>命中判定。关闭按钮优先于牌子，箭头不算——那里点下去应该给到目标。</summary>
+    internal static OverlayHit HitTest(HitRegions? regions, PointF point)
+    {
+        if (regions is null) return OverlayHit.None;
+
+        // 尖端周围永远穿透，优先级高于牌子与箭杆：目标及其旁边一圈的点击必须送达下层应用，
+        // 否则箭头头部画在目标之上时会把这一次点击吞掉。
+        if (regions.TargetExclusionRadius > 0f)
+        {
+            var dx = point.X - regions.Target.X;
+            var dy = point.Y - regions.Target.Y;
+            if (dx * dx + dy * dy <= regions.TargetExclusionRadius * regions.TargetExclusionRadius)
+            {
+                return OverlayHit.None;
+            }
+        }
+
+        if (regions.Close is { } close && close.Contains(point)) return OverlayHit.Close;
+        if (regions.Sign.Contains(point)) return OverlayHit.Sign;
+        return regions.Shaft.IsVisible(point) ? OverlayHit.Shaft : OverlayHit.None;
     }
 
     // ---------------- 牌子 ----------------
@@ -200,12 +308,67 @@ internal static class OverlayRenderer
 
         using var textBrush = new SolidBrush(textColor);
 
+        // 右侧给关闭按钮留位，正文不许压到 × 上
+        var closeReserve = frame.CloseButton ? (CloseButtonDiameter + CloseButtonPadding * 2) * s : 0f;
+
         var inner = new RectangleF(
             frame.SignRect.X + pad,
             top + headerHeight,
-            Math.Max(1f, frame.SignRect.Width - pad * 2),
+            Math.Max(1f, frame.SignRect.Width - pad * 2 - closeReserve),
             Math.Max(1f, frame.SignRect.Height - PointerStyle.SignPadY * s * 2 - headerHeight));
         g.DrawString(frame.Text, font, textBrush, inner, format);
+    }
+
+    /// <summary>牌子右端、垂直居中的关闭按钮圆。</summary>
+    internal static RectangleF CloseButtonRect(RectangleF sign, float scale)
+    {
+        var diameter = CloseButtonDiameter * scale;
+        var pad = CloseButtonPadding * scale;
+        return new RectangleF(
+            sign.Right - pad - diameter,
+            sign.Top + sign.Height / 2f - diameter / 2f,
+            diameter,
+            diameter);
+    }
+
+    /// <summary>
+    /// 画关闭按钮。圆形 + 浅色 ×，颜色取自 --close-color / --close-x-color，
+    /// 非法取值一律回退默认色——渲染永远不该因为颜色崩掉。
+    /// </summary>
+    private static void DrawCloseButton(Graphics g, RenderFrame frame, Color outline, float s)
+    {
+        var circle = CloseButtonRect(frame.SignRect, s);
+        var disc = TryParseColor(frame.Look.CloseColor, Color.FromArgb(255, 60, 70, 88));
+        var cross = TryParseColor(frame.Look.CloseXColor, Color.FromArgb(255, 235, 240, 248));
+
+        using (var brush = new SolidBrush(disc))
+        {
+            g.FillEllipse(brush, circle);
+        }
+
+        using (var ring = new Pen(outline, Math.Max(1f, s)))
+        {
+            g.DrawEllipse(ring, circle);
+        }
+
+        var inset = circle.Width * 0.32f;
+        using var pen = new Pen(cross, Math.Max(1.5f, 2f * s)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(pen, circle.Left + inset, circle.Top + inset, circle.Right - inset, circle.Bottom - inset);
+        g.DrawLine(pen, circle.Right - inset, circle.Top + inset, circle.Left + inset, circle.Bottom - inset);
+    }
+
+    private static Color TryParseColor(string? value, Color fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+
+        try
+        {
+            return ToGdi(ArrowColor.Parse(value));
+        }
+        catch (ArgumentException)
+        {
+            return fallback;
+        }
     }
 
     /// <summary>上游 SignCorners 规则：round = 胶囊 min(h/2, 30pt)，sharp = 直角。</summary>

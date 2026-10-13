@@ -54,6 +54,14 @@ internal static class NativeMethods
         IntPtr hWnd, IntPtr hWndInsertAfter,
         int x, int y, int cx, int cy, uint uFlags);
 
+    // SetWindowPos 标志。动态开关 WS_EX_TRANSPARENT 时必须带 SWP_FRAMECHANGED，
+    // 否则扩展样式的变更不会被系统采纳（窗口对鼠标的行为还停在旧样式上）。
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_FRAMECHANGED = 0x0020;
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -239,6 +247,73 @@ internal static class NativeMethods
 
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    // ---------------- 鼠标消息与低层钩子 ----------------
+
+    public const int WM_MOUSEMOVE = 0x0200;
+    public const int WM_LBUTTONDOWN = 0x0201;
+    public const int WM_RBUTTONDOWN = 0x0204;
+    public const int WM_MBUTTONDOWN = 0x0207;
+    public const int WM_XBUTTONDOWN = 0x020B;
+    public const int WM_MOUSELEAVE = 0x02A3;
+
+    /// <summary>命中测试：可点。</summary>
+    public const int HTCLIENT = 1;
+
+    /// <summary>命中测试：交给下层窗口（跨进程时真正生效的是分层窗口的 alpha=0 像素）。</summary>
+    public const int HTTRANSPARENT = -1;
+
+    public const int TME_LEAVE = 0x00000002;
+    public const int WH_MOUSE_LL = 14;
+    public const int HC_ACTION = 0;
+
+    /// <summary>虚拟键：鼠标左键。用 GetAsyncKeyState 查询按键状态，不依赖消息循环。</summary>
+    public const int VK_LBUTTON = 0x01;
+
+    /// <summary>
+    /// 异步查询按键状态：最高位为 1 表示键当前按下。
+    /// 用来判断"左键是否正按着"——窗口穿透时我们收不到任何鼠标消息，只能这样问系统。
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TRACKMOUSEEVENT
+    {
+        public int cbSize;
+        public uint dwFlags;
+        public IntPtr hwndTrack;
+        public uint dwHoverTime;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>
+    /// WH_MOUSE_LL 允许 hMod 为 NULL（回调在本进程内）。钩子必须装在<strong>有消息循环</strong>的线程上。
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookExW(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
     // ---------------- 进程 ----------------
 

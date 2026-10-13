@@ -211,7 +211,7 @@ internal static class Program
 
         using var manager = new OverlayManager();
 
-        var target = ResolveTarget(manager, command, out var element);
+        var target = ResolveTarget(manager, command, out var element, out var targetRect);
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -238,6 +238,27 @@ internal static class Program
         var sign = new SignContent(command.Text, SafeParseColor(command.Look.Color));
         using var stop = StopSignal.CreateListener(command.OwnerPid);
         var form = manager.WindowFor(monitorForTarget);
+
+        // 点牌子 / 箭杆 / 关闭按钮 = 用户看过了，立刻收场，不必再等 stop 信号
+        StopReason? dismissed = null;
+        form.DismissRequested = reason => dismissed = reason;
+
+        // --until-click / --until-any-click：钩子装在当前 UI 线程，
+        // 等待循环里的 Application.DoEvents 会把回调泵进来。
+        MouseWatch? watch = null;
+        if (command.Behavior.UntilClick || command.Behavior.UntilAnyClick)
+        {
+            var scale = monitorForTarget.Dpi / 96d;
+            var watchRect = command.Target.Kind is TargetKind.At or TargetKind.Mouse
+                ? Around(global, (int)Math.Round(UntilClickRadiusPx * scale))
+                : targetRect;
+
+            watch = new MouseWatch(
+                watchRect,
+                command.Behavior.UntilAnyClick,
+                () => dismissed = StopReason.TargetClicked);
+        }
+
         form.ShowPointer(global, monitorForTarget.Bounds, monitorForTarget.Dpi, sign, command);
 
         // 常驻子进程上屏后立刻放行 start 父进程（--keep-alive 内部开关）
@@ -273,6 +294,12 @@ internal static class Program
         StopReason reason;
         while (true)
         {
+            if (dismissed is { } requested)
+            {
+                reason = requested;
+                break; // 牌子 / 箭杆 / × / 目标上的点击
+            }
+
             reason = stop.Wait(StopReason.DurationElapsed, 0.03);
 
             if (reason != StopReason.DurationElapsed)
@@ -288,6 +315,8 @@ internal static class Program
                 break;
             }
         }
+
+        watch?.Dispose();
 
         if (!command.Behavior.NoAnimation)
         {
@@ -305,7 +334,7 @@ internal static class Program
                 pointed = new { x = global.X, y = global.Y },
                 element = ElementJson(element),
                 monitor = monitorForTarget.Index + 1,
-                endedBy = reason.ToString().ToLowerInvariant(),
+                endedBy = ReasonName(reason),
                 text = sign.DisplayText,
                 ineffective = IneffectiveNotice(command),
             }, JsonOptions));
@@ -337,7 +366,22 @@ internal static class Program
         return notices.Distinct().ToArray();
     }
 
+    /// <summary>--at / --mouse 没有矩形，用一个以目标为心的小方框代替（逻辑像素，再乘 DPI）。</summary>
+    private const int UntilClickRadiusPx = 24;
+
     private const int FadeDurationMs = Core.Rendering.PointerStyle.FadeOutMs;
+
+    private static Rectangle Around(Point center, int radius) =>
+        new(center.X - radius, center.Y - radius, radius * 2, radius * 2);
+
+    /// <summary>--json 的 endedBy：新增的收场原因用 kebab-case，旧值保持原样不破坏已有脚本。</summary>
+    private static string ReasonName(StopReason reason) => reason switch
+    {
+        StopReason.Clicked => "clicked",
+        StopReason.Closed => "closed",
+        StopReason.TargetClicked => "target-clicked",
+        _ => reason.ToString().ToLowerInvariant(),
+    };
 
     /// <summary>
     /// 等淡出动画跑完。
@@ -363,8 +407,11 @@ internal static class Program
     ///
     /// <para><paramref name="element"/> 只在 <c>--element</c> 目标时非空，
     /// 供 --json 回显命中的元素。</para>
+    /// <para><paramref name="targetRect"/> 是目标的全局物理像素包围盒（<c>--at</c> / <c>--mouse</c>
+    /// 只有 1x1 的点），供 <c>--until-click</c> 判断点击落在了哪里。</para>
     /// </summary>
-    private static Point ResolveTarget(OverlayManager manager, PointerCommand command, out ElementInfo? element)
+    private static Point ResolveTarget(
+        OverlayManager manager, PointerCommand command, out ElementInfo? element, out Rectangle targetRect)
     {
         element = null;
         var target = command.Target;
@@ -372,6 +419,7 @@ internal static class Program
         switch (target.Kind)
         {
             case TargetKind.At:
+                targetRect = new Rectangle(target.At!.Value, new Size(1, 1));
                 return target.At!.Value;
 
             case TargetKind.Mouse:
@@ -380,11 +428,13 @@ internal static class Program
                     throw new TargetNotFoundException("取不到当前鼠标位置");
                 }
 
+                targetRect = new Rectangle(new Point(cursor.X, cursor.Y), new Size(1, 1));
                 return new Point(cursor.X, cursor.Y);
 
             case TargetKind.Rect:
             {
                 var r = target.Rect!.Value;
+                targetRect = r;
                 return new Point(r.Left + r.Width / 2, r.Top + r.Height / 2);
             }
 
@@ -399,6 +449,8 @@ internal static class Program
                     // 置前失败不算致命——指着一个被挡住的窗口很难用，但不能因此让命令失败
                     WindowFinder.TryRaise(match.Handle);
                 }
+
+                targetRect = match.Bounds;
 
                 // --anchor：窗口内的锚点。center 默认；title 取标题栏区（上缘 10%）的中点
                 return command.Look.Anchor?.ToLowerInvariant() switch
@@ -426,6 +478,7 @@ internal static class Program
 
                 // 元素包围盒走与 --rect 完全相同的渲染路径（取中心）
                 var bounds = new Rectangle(element.X, element.Y, element.Width, element.Height);
+                targetRect = bounds;
                 return new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
             }
 
@@ -451,9 +504,22 @@ internal static class Program
 
     private static int RunStop(PointerCommand command)
     {
-        if (command.StopHook && (command.OwnerPid is null || command.StopAll))
+        // Claude Code 的 UserPromptSubmit 钩子：绝不允许阻塞或污染用户的下一条提示词。
+        // 所以这里读干 stdin、吞掉一切错误、不写 stdout，并且永远返回 0。
+        if (command.StopHook)
         {
-            return Fail(ExitCode.BadInput, "stop --hook 需要 CLAUDE_PID / BIGARROW_OWNER_PID，且不能与 --all 同用。", command.Json);
+            DrainRedirectedStdin();
+
+            try
+            {
+                StopSignal.Signal(command.OwnerPid, command.StopAll);
+            }
+            catch (Exception)
+            {
+                // 钩子模式下任何失败都必须静默：用户的下一条提示词比收箭头重要
+            }
+
+            return ExitCode.Ok;
         }
 
         var signalled = StopSignal.Signal(command.OwnerPid, command.StopAll);
@@ -475,6 +541,33 @@ internal static class Program
         }
 
         return ExitCode.Ok;
+    }
+
+    /// <summary>
+    /// 钩子模式下 stdin 通常是 Claude Code 写进来的一段 JSON。
+    /// 读掉它（有超时上限）并丢弃：不读的话管道可能被写满，钩子反而会卡住。
+    /// stdin 没被重定向时直接返回，绝不阻塞在控制台输入上。
+    /// </summary>
+    private static void DrainRedirectedStdin()
+    {
+        try
+        {
+            if (!Console.IsInputRedirected) return;
+
+            var buffer = new char[4096];
+            var deadline = Environment.TickCount64 + 250;
+            while (Environment.TickCount64 < deadline)
+            {
+                var read = Console.In.Read(buffer, 0, buffer.Length);
+                if (read <= 0) return;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     // ---------------- doctor ----------------
@@ -549,25 +642,23 @@ internal static class Program
                 new SignContent("probe", ArrowColor.Parse("red")), probeCommand);
 
             var rect = form.WindowRect;
+            var center = new Point(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2);
+            var sign = form.SignCenterScreen;
 
-            // 探窗口范围内的三个点：左边缘、中心、右边缘
-            var points = new[]
+            // 三个有语义的探点：目标本身必须穿透，牌子必须可点，窗口中心不预设期望
+            var results = new[]
             {
-                new Point(rect.Left + 5, rect.Top + rect.Height / 2),
-                new Point(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2),
-                new Point(rect.Right - 5, rect.Top + rect.Height / 2),
+                Probe(form, "target", target),
+                Probe(form, "sign", sign),
+                Probe(form, "center", center),
             };
 
-            var results = points
-                .Select(p => new HitTestPoint(p.X, p.Y, form.ProbeHitTest(p)))
-                .ToArray();
-
             var bits = form.StyleBits();
-            var windowRect = rect;
 
             manager.HideAll();
 
-            var allTransparent = results.All(r => r.HitTest == Win32.HTTRANSPARENT);
+            var transparentAtTarget = results.First(r => r.Label == "target").HitTest == NativeMethods.HTTRANSPARENT;
+            var clickableAtSign = results.First(r => r.Label == "sign").HitTest == NativeMethods.HTCLIENT;
 
             return new OverlayProbe(
                 MonitorIndex: monitor.Index + 1,
@@ -576,9 +667,10 @@ internal static class Program
                 StyleToolWindow: bits.ToolWindow,
                 StyleNoActivate: bits.NoActivate,
                 StyleTransparent: bits.Transparent,
-                WindowRect: windowRect,
+                WindowRect: rect,
                 HitTestResults: results,
-                ConfigurationValid: allTransparent && bits.Layered && bits.Transparent && bits.NoActivate && bits.ToolWindow);
+                ConfigurationValid: transparentAtTarget && clickableAtSign
+                    && bits.Layered && bits.NoActivate && bits.ToolWindow);
         }
         catch (Exception ex)
         {
@@ -611,15 +703,20 @@ internal static class Program
             $"  原始 EXSTYLE  0x{probe.RawExStyle:X}",
             $"  扩展样式  LAYERED={probe.StyleLayered}  TOOLWINDOW={probe.StyleToolWindow}  " +
             $"NOACTIVATE={probe.StyleNoActivate}  TRANSPARENT={probe.StyleTransparent}",
-            $"  命中测试  {string.Join(", ", probe.HitTestResults.Select(r => $"({r.X},{r.Y})→{r.HitTest}"))}",
+            $"  命中测试  {string.Join(", ", probe.HitTestResults.Select(r => $"{r.Label}({r.X},{r.Y})→{r.HitTest}"))}",
             $"  样式与命中测试  {(probe.ConfigurationValid ? "通过" : "失败")}",
+            $"  可点区域  LAYERED={probe.StyleLayered}  NOACTIVATE={probe.StyleNoActivate}  " +
+            "牌子→HTCLIENT、目标→HTTRANSPARENT（点牌子收场，点目标照常送达）",
             "  跨进程点击送达  未测试；需要点击被箭头覆盖的测试按钮确认。",
         };
 
         return string.Join("\n", lines);
     }
 
-    private sealed record HitTestPoint(int X, int Y, int HitTest);
+    private static HitTestPoint Probe(OverlayForm form, string label, Point point) =>
+        new(label, point.X, point.Y, form.ProbeHitTest(point));
+
+    private sealed record HitTestPoint(string Label, int X, int Y, int HitTest);
 
     private sealed record OverlayProbe(
         int MonitorIndex,

@@ -41,7 +41,7 @@ public static class ArgParser
     /// <summary>上游支持、Windows 版 v1 未实现的行为参数。接受但标记为未生效。</summary>
     private static readonly HashSet<string> IneffectiveOnWindows = new(StringComparer.Ordinal)
     {
-        "--follow", "--until-click", "--until-any-click", "--say", "--png", "--close-button",
+        "--follow", "--say", "--png",
     };
 
     private static readonly string[] ColorNames =
@@ -230,6 +230,12 @@ public static class ArgParser
             return ParseResult.BadInput("--role 需要配合 --element 使用。");
         }
 
+        // --hook 是 Claude Code 的 UserPromptSubmit 钩子入口，只在 stop 上成立
+        if (switches.Contains("--hook") && kind != CommandKind.Stop)
+        {
+            return ParseResult.BadInput("--hook 只用于 stop（Claude Code 的 UserPromptSubmit 钩子）。");
+        }
+
         // point / start 必须有目标，否则 agent 无从知道指哪
         if (kind is CommandKind.Point or CommandKind.Start && targetResult.Target.Kind == TargetKind.None)
         {
@@ -301,7 +307,7 @@ public static class ArgParser
                 Voice = flags.GetValueOrDefault("--voice"),
                 Png = switches.Contains("--png"),
                 IneffectiveFlags = ineffective
-                    .Concat(new[] { "--voice", "--edge-color", "--close-color", "--close-x-color" }.Where(flags.ContainsKey))
+                    .Concat(new[] { "--voice", "--edge-color" }.Where(flags.ContainsKey))
                     .Distinct().ToArray(),
             },
         };
@@ -567,6 +573,15 @@ public static class ArgParser
           --raise                显式请求把目标窗口置前
           --no-raise             保持焦点（默认；与 --raise 同用时优先）
           --no-animation         无入场/呼吸/淡出
+          --close-button         牌子右端画一个圆形 ×，点它即收起（原因 closed）
+          --until-click          用户点到目标时收起（原因 target-clicked），点击照常送达下层应用
+          --until-any-click      用户在任何位置点一下即收起
+
+        点击交互：
+          点牌子或箭杆会立刻收起箭头（原因 clicked）；目标附近与空白像素继续穿透到下层应用
+          stop --hook 供 Claude Code 的 UserPromptSubmit 钩子使用：静默、永不写 stdout、永远返回 0
+          ~/.claude/settings.json：{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command",
+          "command":"agentpointer stop --hook"}]}]}}
 
         通用：
           --json                 结构化输出
@@ -574,8 +589,8 @@ public static class ArgParser
           --help --version
 
         尚不支持：
-          --follow --until-click --until-any-click --close-button --say --voice --png
-          --style ring|box、--shape zigzag|spiral、其他 anchor 及 edge/close 颜色参数
+          --follow --say --voice --png --edge-color
+          --style ring|box、--shape zigzag|spiral、其他 anchor
           上述外观/行为兼容参数会给出未生效提示，--json 中见 ineffective
           --peekaboo / --snapshot 是 macOS 专属，返回退出码 2
 
