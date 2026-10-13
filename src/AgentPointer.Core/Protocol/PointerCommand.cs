@@ -67,6 +67,12 @@ public sealed record TargetSpec
 
     /// <summary>--display N，把坐标解释为第 N 个显示器的局部坐标（1-based，与上游一致）。</summary>
     public int? DisplayIndex { get; init; }
+
+    /// <summary>
+    /// --logical：<c>--at</c> / <c>--rect</c> 的取值是逻辑坐标（96 DPI，上游 macOS 的 point），
+    /// 相对 <see cref="DisplayIndex"/> 指定的屏（缺省主屏），由调用方换算成全局物理像素。
+    /// </summary>
+    public bool Logical { get; init; }
 }
 
 /// <summary>外观参数。尚未实现的样式会在输出中说明回退；上游免费样式不属于付费功能。</summary>
@@ -106,9 +112,13 @@ public sealed record LookSpec
 /// <summary>行为参数。未在 Windows 上实现的参数仍会被解析，但标记为未生效。</summary>
 public sealed record BehaviorSpec
 {
+    /// <summary>--no-raise：明确要求不要动前台窗口，保持当前焦点。</summary>
     public bool NoRaise { get; init; }
 
-    /// <summary>--raise：显式请求将目标窗口置前；默认不抢焦点。</summary>
+    /// <summary>
+    /// 是否把目标窗口置前。窗口 / 元素目标<strong>默认置前</strong>（上游行为）；
+    /// --no-raise 关闭。--raise 仅为兼容保留，不再改变结果。坐标目标永远为 false。
+    /// </summary>
     public bool Raise { get; init; }
 
     /// <summary>--no-animation：直出最终帧，无入场/呼吸/淡出（上游语义，已生效）。</summary>

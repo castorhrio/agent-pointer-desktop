@@ -219,8 +219,31 @@ internal static class Program
             return Fail(ExitCode.BadInput, $"显示器序号 {command.Target.DisplayIndex} 不存在（共 {manager.Monitors.Count} 块，从 1 开始）", command.Json);
         }
 
+        // --logical：把 at/rect 从 96 DPI 逻辑坐标换算成全局物理像素（上游 macOS 的 point 语义）。
+        // 换算以 --display 指定的屏为参照，缺省用主屏。
+        if (command.Target.Logical)
+        {
+            var logicalMonitor = display is { } logicalIndex
+                ? manager.Monitors[logicalIndex]
+                : PrimaryMonitor(manager.Monitors);
+
+            if (command.Target.Kind == TargetKind.Rect)
+            {
+                targetRect = LogicalCoordinates.ToPhysical(targetRect, logicalMonitor.Bounds, logicalMonitor.Scale);
+                target = new Point(targetRect.Left + targetRect.Width / 2, targetRect.Top + targetRect.Height / 2);
+            }
+            else
+            {
+                target = LogicalCoordinates.ToPhysical(target, logicalMonitor.Bounds, logicalMonitor.Scale);
+                targetRect = new Rectangle(target, new Size(1, 1));
+            }
+        }
+
         // 只有输入坐标需要从显示器局部换算；窗口和鼠标已经是全局坐标。
-        manager.TryToGlobal(command.Target.Kind is TargetKind.At or TargetKind.Rect ? display : null, target, out var global);
+        // --logical 已经自己算成全局物理像素，不能再按 --display 翻译第二次。
+        manager.TryToGlobal(
+            !command.Target.Logical && command.Target.Kind is TargetKind.At or TargetKind.Rect ? display : null,
+            target, out var global);
         var monitorForTarget = manager.MonitorFor(global);
         if (display is { } selected && monitorForTarget.Index != selected)
         {
@@ -551,6 +574,13 @@ internal static class Program
 
     /// <summary>--display N 是 1-based（与上游一致），内部数组下标从 0 开始。</summary>
     private static int? ToZeroBased(int? display) => display is { } d ? d - 1 : null;
+
+    /// <summary>主屏：包含全局原点 (0,0) 的那块屏；枚举顺序不保证，找不到就退回第一块。</summary>
+    private static MonitorInfo PrimaryMonitor(IReadOnlyList<MonitorInfo> monitors)
+    {
+        var primary = monitors.FirstOrDefault(m => m.Bounds.Contains(0, 0)) ?? monitors.FirstOrDefault();
+        return primary ?? throw new TargetNotFoundException("没有可用的显示器。");
+    }
 
     // ---------------- stop ----------------
 

@@ -1,7 +1,10 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 using AgentPointer.Cli.Interop;
+using AgentPointer.Core.Targeting;
 
 namespace AgentPointer.Cli.Targeting;
 
@@ -51,7 +54,10 @@ public static class WindowFinder
 
     /// <summary>
     /// 按 <c>App</c> 或 <c>App:title</c> 找窗口。找不到返回 null。
-    /// 多个匹配时优先取标题最接近的，其次取面积最大的。
+    ///
+    /// <para>匹配顺序：<see cref="AppAliases.Candidates"/> 逐个候选尝试，每个候选先比进程名、
+    /// 再比可执行文件的 FileDescription（上游 App 名往往落在描述里）；标题能收窄就收窄。
+    /// 全部候选都不中时，最后退到窗口标题包含查询串。</para>
     /// </summary>
     public static WindowMatch? Find(string query)
     {
@@ -59,31 +65,59 @@ public static class WindowFinder
 
         var (appPart, titlePart) = SplitQuery(query);
         var windows = Enumerate();
+        List<WindowMatch>? fallback = null;
 
-        var candidates = windows
-            .Where(w => ProcessMatches(w.ProcessName, appPart))
-            .Where(w => titlePart is null || w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        if (candidates.Count == 0)
+        foreach (var candidate in AppAliases.Candidates(appPart))
         {
-            // 标题匹配不上时，退一步只按进程名匹配，别直接放弃
+            var hits = windows.Where(w => CandidateMatches(w, candidate)).ToList();
+            if (hits.Count == 0) continue;
+
             if (titlePart is not null)
             {
-                candidates = windows
-                    .Where(w => ProcessMatches(w.ProcessName, appPart))
+                var narrowed = hits
+                    .Where(w => w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase))
                     .ToList();
+
+                if (narrowed.Count > 0) return Pick(narrowed, titlePart);
             }
+
+            // 标题对不上时留作兜底，同时继续试后面的候选（更精确的别名可能命中）
+            fallback ??= hits;
         }
 
-        if (candidates.Count == 0) return null;
+        if (fallback is not null) return Pick(fallback, null);
 
-        return candidates
+        // 最后手段：上游的 App:title 里 title 有时就是唯一的线索
+        var byTitle = windows
+            .Where(w => w.Title.Contains(appPart, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return byTitle.Count > 0 ? Pick(byTitle, appPart) : null;
+    }
+
+    /// <summary>单个候选是否命中这个窗口：进程名 → FileDescription → ApplicationFrameHost 标题。</summary>
+    internal static bool CandidateMatches(WindowMatch window, string candidate)
+    {
+        if (ProcessMatches(window.ProcessName, candidate)) return true;
+
+        var description = FileDescriptionOf(window.Handle);
+        if (description is not null && description.Contains(candidate, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // ApplicationFrameHost 一个进程承载一堆设置窗口，只能靠标题认
+        return string.Equals(candidate, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)
+            && AppAliases.ApplicationFrameHostTitleHints.Any(hint =>
+                window.Title.Contains(hint, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static WindowMatch Pick(IReadOnlyList<WindowMatch> candidates, string? titlePart) =>
+        candidates
             .OrderByDescending(w => titlePart is not null &&
                                     w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(w => (long)w.Bounds.Width * w.Bounds.Height)
             .First();
-    }
 
     /// <summary>把 <c>App:标题</c> 拆开。标题里可以含冒号，所以只拆第一个。</summary>
     public static (string App, string? Title) SplitQuery(string query)
@@ -163,6 +197,30 @@ public static class WindowFinder
 
         var sb = new StringBuilder(length + 1);
         return NativeMethods.GetWindowText(hWnd, sb, sb.Capacity) > 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>pid → FileDescription 缓存。逐窗口读文件版本信息很贵，而且同一进程结果固定。</summary>
+    private static readonly ConcurrentDictionary<int, string?> FileDescriptions = new();
+
+    private static string? FileDescriptionOf(IntPtr hWnd)
+    {
+        NativeMethods.GetWindowThreadProcessId(hWnd, out var pid);
+        if (pid == 0) return null;
+
+        return FileDescriptions.GetOrAdd((int)pid, static rawPid =>
+        {
+            try
+            {
+                using var process = Process.GetProcessById(rawPid);
+                var description = process.MainModule?.FileVersionInfo?.FileDescription;
+                return string.IsNullOrWhiteSpace(description) ? null : description;
+            }
+            catch
+            {
+                // 权限不足或进程已退出：没有描述信息不算错误
+                return null;
+            }
+        });
     }
 
     private static string? GetProcessName(IntPtr hWnd)

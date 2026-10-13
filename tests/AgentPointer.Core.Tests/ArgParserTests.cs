@@ -302,11 +302,41 @@ public class ArgParserTests
     }
 
     [Fact]
-    public void 窗口默认不抢焦点且只有显式raise才置前()
+    public void 窗口与元素目标默认置前_no_raise才关闭()
     {
-        Assert.False(Ok("point", "--window", "Notepad").Command!.Behavior.Raise);
-        Assert.True(Ok("point", "--window", "Notepad", "--raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--window", "Notepad").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--element", "Allow", "--app", "Notepad").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--window", "Notepad", "--no-raise").Command!.Behavior.Raise);
         Assert.False(Ok("point", "--window", "Notepad", "--raise", "--no-raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--window", "Notepad", "--raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--element", "Allow", "--no-raise").Command!.Behavior.NoRaise);
+    }
+
+    [Fact]
+    public void 坐标目标永远不置前()
+    {
+        Assert.False(Ok("point", "--at", "1,1").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--rect", "0,0,10,10").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--mouse").Command!.Behavior.Raise);
+    }
+
+    [Fact]
+    public void logical被解析且只作用于at与rect()
+    {
+        Assert.True(Ok("point", "--at", "10,20", "--logical").Command!.Target.Logical);
+        Assert.True(Ok("point", "--at", "10,20", "--logical", "--display", "2").Command!.Target.Logical);
+        Assert.True(Ok("point", "--rect", "0,0,10,10", "--logical").Command!.Target.Logical);
+        Assert.False(Ok("point", "--at", "10,20").Command!.Target.Logical);
+    }
+
+    [Fact]
+    public void logical配非坐标目标退出码为2()
+    {
+        var r = Parse("point", "--window", "Notepad", "--logical");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--logical", r.Error);
+
+        Assert.Equal(ExitCode.BadInput, Parse("point", "--mouse", "--logical").ExitCode);
     }
 
     [Fact]

@@ -28,7 +28,7 @@ public static class ArgParser
     private static readonly HashSet<string> BoolFlags = new(StringComparer.Ordinal)
     {
         "--mouse", "--no-raise", "--no-animation", "--follow", "--until-click", "--until-any-click",
-        "--close-button", "--say", "--flash", "--notify", "--png", "--dry-run", "--json",
+        "--close-button", "--say", "--flash", "--notify", "--png", "--dry-run", "--json", "--logical",
         "--help", "--version", "--all", "--hook", "--keep-alive", "--raise",
     };
 
@@ -230,6 +230,14 @@ public static class ArgParser
             return ParseResult.BadInput("--role 需要配合 --element 使用。");
         }
 
+        // --logical 只改 at/rect 的坐标解释，给别处没有意义，直接点出来
+        if (switches.Contains("--logical")
+            && (kind is CommandKind.Point or CommandKind.Start)
+            && target.Kind is not (TargetKind.At or TargetKind.Rect))
+        {
+            return ParseResult.BadInput("--logical 需要配合 --at / --rect 使用。");
+        }
+
         // --hook 是 Claude Code 的 UserPromptSubmit 钩子入口，只在 stop 上成立
         if (switches.Contains("--hook") && kind != CommandKind.Stop)
         {
@@ -269,7 +277,7 @@ public static class ArgParser
         {
             Kind = kind,
             Text = text,
-            Target = target,
+            Target = target with { Logical = switches.Contains("--logical") },
             Duration = duration,
             Json = switches.Contains("--json"),
             DryRun = switches.Contains("--dry-run"),
@@ -296,8 +304,11 @@ public static class ArgParser
             },
             Behavior = new BehaviorSpec
             {
-                NoRaise = !switches.Contains("--raise") || switches.Contains("--no-raise"),
-                Raise = switches.Contains("--raise") && !switches.Contains("--no-raise"),
+                // 上游默认把窗口/元素目标带到前台；--no-raise 关掉，--raise 仅为兼容保留。
+                // 坐标目标（--at / --rect / --mouse）没有窗口可置前，永远不置前。
+                NoRaise = switches.Contains("--no-raise"),
+                Raise = target.Kind is TargetKind.Window or TargetKind.Element
+                        && !switches.Contains("--no-raise"),
                 NoAnimation = switches.Contains("--no-animation"),
                 Follow = switches.Contains("--follow"),
                 UntilClick = switches.Contains("--until-click"),
@@ -561,6 +572,8 @@ public static class ArgParser
           --anchor center|title  窗口锚点
           --display N            从 1 开始，编号见 doctor；at/rect 使用屏内局部像素，
                                  window/mouse 作为显示器过滤条件
+          --logical              at/rect 改用逻辑坐标（96 DPI，与上游 macOS 的 point 一致），
+                                 相对 --display 指定的屏（缺省主屏）换算成全局物理像素
 
         外观：
           --text <s>             牌子上的文字；{{value}} 变成可点的复制按钮（点击复制，箭头不收场）
@@ -572,8 +585,8 @@ public static class ArgParser
 
         行为：
           --duration <sec>       非负有限秒数，0 表示不限时
-          --raise                显式请求把目标窗口置前
-          --no-raise             保持焦点（默认；与 --raise 同用时优先）
+          --raise                兼容占位（窗口/元素目标本来就默认置前）
+          --no-raise             不把目标窗口置前，保持当前焦点
           --no-animation         无入场/呼吸/淡出
           --close-button         牌子右端画一个圆形 ×，点它即收起（原因 closed）
           --until-click          用户点到目标时收起（原因 target-clicked），点击照常送达下层应用

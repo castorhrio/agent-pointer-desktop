@@ -29,7 +29,7 @@ Claude Code / Codex skill file status can be checked; complete tasks in a live a
 | On-screen guidance | An arrow and action label show where to complete the next step |
 | Local demo | Try the guidance and completion flow before setting up an agent |
 | Agent setup | Install Claude Code / Codex skills and check that files match the current app |
-| Focus preservation | Guidance keeps your current input focus; explicit `--raise` requests foreground activation |
+| Focus preservation | The overlay itself never takes focus; window and element targets are raised to the foreground unless `--no-raise` is given |
 | Click-through | Mouse clicks reach the app beneath the overlay, verified across processes |
 | Click to dismiss | A click on the action label or the arrow shaft ends the guidance right away; the target stays click-through |
 | Attention | `--say` reads the action text aloud (`--voice` picks the voice), `--flash` blinks the target window's taskbar button, `--notify` shows a Windows notification |
@@ -150,9 +150,14 @@ through the same path as `--rect`. JSON results echo the matched element. `eleme
 agentpointer point --app notepad --element "File" --role menuitem --text "Click File to continue"
 agentpointer elements --app notepad --match "file" --json
 ```
-`--app` is an alias for `--window`. Windows are matched by process name. By default, matching preserves focus;
-`--raise` explicitly requests foreground activation, and `--no-raise` takes precedence.
-`--dry-run` draws nothing and never changes focus.
+`--app` is an alias for `--window`. Windows are matched by process name, then by the executable's file
+description, and finally by window title. Friendly names from the macOS tool are mapped to their Windows
+equivalents: `--app "Google Chrome"` matches `chrome`, `--app Finder` matches `explorer`,
+`--app "Visual Studio Code"` matches `Code`, `--app Terminal` matches `WindowsTerminal` / `powershell` / `pwsh` / `cmd`,
+and `--app "System Settings"` matches `SystemSettings` (or an `ApplicationFrameHost` window titled Settings).
+For `--window` / `--app` / `--element` targets, the matched window is raised to the foreground by default;
+`--no-raise` leaves the foreground window alone, and `--raise` is accepted as a compatibility alias for the default.
+`--at` / `--rect` / `--mouse` never change the foreground window. `--dry-run` draws nothing and never changes focus.
 
 Appearance options include `--text`, `--from`, `--color`, `--size S|M|L`, `--shape bend|straight`,
 `--corners round|sharp`, `--border shadow|white-black|black`, `--border-color`, and `--text-color`.
@@ -199,11 +204,13 @@ negative coordinates are valid. Display numbering starts at **1** in `doctor`, `
 - `--window` / `--mouse` already produce global coordinates. `--display N` filters their target display without translating again.
 - Targets outside every display, including gaps between displays, return exit code 3. `--dry-run` performs the same validation.
 - An invalid display number returns exit code 2.
+- `--logical` reads `--at` / `--rect` as logical (96-DPI, DPI-independent) coordinates relative to `--display N`, defaulting to the primary display, and converts them to global physical pixels using that monitor's scale and origin.
 
-Upstream macOS uses logical points, so its coordinates cannot be reused directly. At 150% scaling,
-multiply display-local logical coordinates by `1.5`, then add that display's global physical origin.
-Resized screenshots also require conversion by their image scale. PerMonitorV2 keeps rendering and window
-positioning in physical pixels; it does not convert logical coordinates supplied by the caller.
+Upstream macOS uses logical points, so its coordinates cannot be reused directly: pass `--logical` and the
+conversion happens for you. Without it, multiply display-local logical coordinates by the scale factor
+yourself (`1.5` at 150% scaling), then add that display's global physical origin. Resized screenshots still
+require conversion by their image scale. PerMonitorV2 keeps rendering and window positioning in physical
+pixels and never converts coordinates supplied by the caller on its own.
 
 ## Lifecycle and exit codes
 
