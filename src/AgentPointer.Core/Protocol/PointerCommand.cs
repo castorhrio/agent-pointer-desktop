@@ -193,4 +193,16 @@ public sealed record PointerCommand
 
     /// <summary>元素匹配用的查询串，elements 子命令用。</summary>
     public string? ElementsMatch { get; init; }
+
+    /// <summary>install-skill --claude：只装 Claude Code 的技能目录。</summary>
+    public bool InstallClaude { get; init; }
+
+    /// <summary>install-skill --codex：只装 Codex 的技能目录。</summary>
+    public bool InstallCodex { get; init; }
+
+    /// <summary>install-skill --force：允许覆盖已存在且内容不同的技能文件。</summary>
+    public bool Force { get; init; }
+
+    /// <summary>install-skill --add-path：把 CLI 所在目录加入用户 PATH。</summary>
+    public bool AddPath { get; init; }
 }

@@ -43,7 +43,8 @@ internal static class Program
         // --help / --version 走 stdout
         if (parse.HelpRequested)
         {
-            Out(ArgParser.HelpText);
+            // 语言来自 --lang，其次 AGENTPOINTER_LANG，最后 UI 语言
+            Out(ArgParser.HelpFor(ArgParser.LanguageFromArgs(args), CultureInfo.CurrentUICulture));
             return ExitCode.Ok;
         }
 
@@ -74,7 +75,7 @@ internal static class Program
                 CommandKind.Stop => RunStop(command),
                 CommandKind.Start when !command.KeepAlive && !command.DryRun => RunStart(command, args),
                 CommandKind.Point or CommandKind.Start => RunPoint(command),
-                CommandKind.InstallSkill => SkillInstaller.Install(command.Json, command.DryRun),
+                CommandKind.InstallSkill => SkillInstaller.Install(command),
                 _ => Fail(ExitCode.BadInput, "不支持的子命令"),
             };
         }

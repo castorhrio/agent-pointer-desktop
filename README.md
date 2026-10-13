@@ -110,7 +110,28 @@ The desktop action uses the same installation path as these commands:
 ```powershell
 agentpointer install-skill --dry-run --json
 agentpointer install-skill --json
+agentpointer install-skill --codex --force
+agentpointer install-skill --add-path
 ```
+
+`--claude` installs the Claude Code skill only (`%USERPROFILE%\.claude\skills\agentpointer`), `--codex`
+the Codex skill only (`%USERPROFILE%\.agents\skills\agentpointer`); giving neither installs both.
+
+Existing files are never overwritten silently. Every destination reports one of four statuses:
+`installed` (nothing was there), `up-to-date` (the content already matches), `exists` (the content
+differs, so it was skipped — rerun with `--force` to overwrite), or `updated` (differing content was
+replaced because `--force` was given). All four are success and exit with code 0. `--dry-run` reports the
+same statuses per destination as `status` in JSON and writes nothing.
+
+With `--add-path`, the directory containing the CLI is appended to the user `PATH`
+(`HKCU\Environment`; the value type is preserved, so `%USERPROFILE%`-style entries keep expanding).
+Duplicates are ignored regardless of case, surrounding spaces, or a trailing backslash. Windows is
+notified with `WM_SETTINGCHANGE`, so running hosts pick the change up; open a new terminal to see it in
+`PATH`. JSON reports `path` as `added`, `already`, or `skipped`. `--dry-run` reports the plan and writes
+nothing, neither to skills nor to `PATH`.
+
+`--claude`, `--codex`, `--force`, and `--add-path` are only valid with `install-skill`; on any other
+command they exit with code 2.
 
 The skill comes from [skills/agentpointer/SKILL.md](skills/agentpointer/SKILL.md), with
 `agents/openai.yaml` for Codex display metadata. Both are embedded in the CLI and need no separate download.
@@ -138,8 +159,13 @@ The default label when `--text` is omitted only identifies a location; it cannot
 | `stop --all` | Clear all overlays in the current Windows session |
 | `stop --hook` | Require an owner environment variable and clear that owner's overlays; quiet if none exist |
 | `doctor` | Report displays, DPI, desktop availability, overlay styles, and hit testing |
-| `install-skill` | Install skill files for both agents |
+| `install-skill` | Install skill files for both agents; `--claude` / `--codex` pick one, `--force` overwrites, `--add-path` adds the CLI to the user PATH |
 | `elements` | List the elements a window exposes to `--element`, filtered by `--role` and `--match` |
+
+`--help` and `--version` work without a command. Help exists in English and Chinese: `--lang en|zh` or
+the `AGENTPOINTER_LANG` environment variable decides, otherwise the Windows display language does
+(`zh-*` Chinese, anything else English). Both texts list the same options, so a documented flag is never
+missing in one language.
 
 Targets are mutually exclusive: `--at X,Y`, `--rect X,Y,W,H`, `--mouse`, or `--window App[:title]`.
 `--element <label>` targets a UI Automation element inside `--app` / `--window` (or the foreground

@@ -708,4 +708,98 @@ public class ArgParserTests
         Assert.True(r.Ok);
         Assert.Null(r.Command!.OwnerPid);
     }
+
+    // ---------------- --lang ----------------
+
+    [Theory]
+    [InlineData("en")]
+    [InlineData("zh")]
+    [InlineData("EN")]
+    [InlineData("zh-CN")]
+    public void lang接受语言取值且对任何子命令都成立(string raw)
+    {
+        Assert.True(Ok("point", "--at", "1,1", "--lang", raw).Ok);
+        Assert.True(Ok("doctor", "--lang", raw).Ok);
+        Assert.True(Ok("install-skill", "--lang", raw).Ok);
+        Assert.True(Ok("point", "--at", "1,1", $"--lang={raw}").Ok);
+    }
+
+    [Theory]
+    [InlineData("de")]
+    [InlineData("english")]
+    [InlineData("")]
+    public void lang非法取值退出码为2(string raw)
+    {
+        var r = Parse("point", "--at", "1,1", "--lang", raw);
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void lang缺少取值退出码为2()
+    {
+        var r = Parse("point", "--at", "1,1", "--lang");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void help旁边给出非法lang同样退出码为2()
+    {
+        var r = Parse("--help", "--lang", "de");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void 等号写法的非法lang退出码为2()
+    {
+        Assert.Equal(ExitCode.BadInput, Parse("point", "--at", "1,1", "--lang=de").ExitCode);
+    }
+
+    // ---------------- install-skill 专属开关 ----------------
+
+    [Theory]
+    [InlineData("--claude")]
+    [InlineData("--codex")]
+    [InlineData("--force")]
+    [InlineData("--add-path")]
+    public void install专用开关只允许用于install_skill(string flag)
+    {
+        Assert.Equal(CommandKind.InstallSkill, Ok("install-skill", flag).Command!.Kind);
+
+        var r = Parse("point", "--at", "1,1", flag);
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains(flag, r.Error);
+        Assert.Equal(ExitCode.BadInput, Parse("doctor", flag).ExitCode);
+        Assert.Equal(ExitCode.BadInput, Parse("stop", flag).ExitCode);
+    }
+
+    [Fact]
+    public void install开关默认关闭()
+    {
+        var c = Ok("install-skill").Command!;
+        Assert.False(c.InstallClaude);
+        Assert.False(c.InstallCodex);
+        Assert.False(c.Force);
+        Assert.False(c.AddPath);
+    }
+
+    [Fact]
+    public void install开关被解析()
+    {
+        var c = Ok("install-skill", "--claude", "--force", "--add-path").Command!;
+        Assert.True(c.InstallClaude);
+        Assert.False(c.InstallCodex);
+        Assert.True(c.Force);
+        Assert.True(c.AddPath);
+
+        Assert.True(Ok("install-skill", "--codex").Command!.InstallCodex);
+    }
+
+    [Fact]
+    public void 安装开关不进入未生效列表()
+    {
+        Assert.Empty(Ok("install-skill", "--force", "--add-path").Command!.Behavior.IneffectiveFlags);
+    }
 }

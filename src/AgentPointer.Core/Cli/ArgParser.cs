@@ -20,7 +20,7 @@ public static class ArgParser
         "--at", "--rect", "--window", "--app", "--element", "--role", "--display",
         "--text", "--from", "--anchor", "--color", "--size", "--style", "--shape", "--corners",
         "--border", "--border-color", "--text-color", "--edge-color",
-        "--close-color", "--close-x-color", "--duration", "--voice",
+        "--close-color", "--close-x-color", "--duration", "--voice", "--lang",
         "--peekaboo", "--snapshot", "--match",
     };
 
@@ -30,6 +30,13 @@ public static class ArgParser
         "--mouse", "--no-raise", "--no-animation", "--follow", "--until-click", "--until-any-click",
         "--close-button", "--say", "--flash", "--notify", "--png", "--dry-run", "--json", "--logical",
         "--help", "--version", "--all", "--hook", "--keep-alive", "--raise",
+        "--claude", "--codex", "--force", "--add-path",
+    };
+
+    /// <summary>只有 install-skill 才成立的开关。给别的子命令就是 agent 敲错了命令。</summary>
+    private static readonly string[] InstallOnlyFlags =
+    {
+        "--claude", "--codex", "--force", "--add-path",
     };
 
     /// <summary>上游的 macOS 专属参数。在 Windows 上明确拒绝，不静默忽略。</summary>
@@ -76,6 +83,38 @@ public static class ArgParser
         {
             return ParseResult.BadInput(
                 "缺少子命令。可用子命令：point / start / stop / elements / doctor / install-skill");
+        }
+
+        // --lang 允许出现在任何位置（包括与 --help 一起），所以先把取值整体校验一遍：
+        // 放在 --help 的提前返回之前，非法值才能保证拿到退出码 2。
+        for (var scan = 0; scan < args.Length; scan++)
+        {
+            var token = args[scan];
+
+            if (token.StartsWith("--lang=", StringComparison.Ordinal))
+            {
+                var inline = token["--lang=".Length..];
+                if (!TryNormalizeLanguage(inline, out _))
+                {
+                    return ParseResult.BadInput($"参数 '--lang' 取值 '{inline}' 非法。可用：en / zh");
+                }
+
+                continue;
+            }
+
+            if (!string.Equals(token, "--lang", StringComparison.Ordinal)) continue;
+
+            if (scan + 1 >= args.Length)
+            {
+                return ParseResult.BadInput("参数 '--lang' 缺少取值。可用：en / zh");
+            }
+
+            if (!TryNormalizeLanguage(args[scan + 1], out _))
+            {
+                return ParseResult.BadInput($"参数 '--lang' 取值 '{args[scan + 1]}' 非法。可用：en / zh");
+            }
+
+            scan++;
         }
 
         var index = 0;
@@ -244,6 +283,13 @@ public static class ArgParser
             return ParseResult.BadInput("--hook 只用于 stop（Claude Code 的 UserPromptSubmit 钩子）。");
         }
 
+        // install-skill 专属开关出现在别的子命令上：直接拒绝，别让 agent 以为自己做成了什么
+        var installOnly = InstallOnlyFlags.Where(switches.Contains).ToArray();
+        if (installOnly.Length > 0 && kind != CommandKind.InstallSkill)
+        {
+            return ParseResult.BadInput($"{string.Join(" / ", installOnly)} 只用于 install-skill。");
+        }
+
         // point / start 必须有目标，否则 agent 无从知道指哪
         if (kind is CommandKind.Point or CommandKind.Start && targetResult.Target.Kind == TargetKind.None)
         {
@@ -286,6 +332,10 @@ public static class ArgParser
             KeepAlive = switches.Contains("--keep-alive"),
             OwnerPid = ResolveOwnerPid(env),
             ElementsMatch = match,
+            InstallClaude = switches.Contains("--claude"),
+            InstallCodex = switches.Contains("--codex"),
+            Force = switches.Contains("--force"),
+            AddPath = switches.Contains("--add-path"),
             Look = new LookSpec
             {
                 From = from,
@@ -546,7 +596,10 @@ public static class ArgParser
             : null;
     }
 
-    public const string HelpText = """
+    /// <summary>按当前 UI 语言选出的帮助文本（保留旧调用点）。</summary>
+    public static string HelpText => HelpFor(null, CultureInfo.CurrentUICulture);
+
+    public static string HelpTextZh => """
         agentpointer — 让 AI agent 在 Windows 屏幕上指给你看
 
         用法：agentpointer <子命令> [选项]
@@ -581,7 +634,7 @@ public static class ArgParser
           --color <name|#hex>    red orange yellow green teal blue purple pink black white，#RRGGBB 或 #RGB
           --size S|M|L           --style arrow           --shape bend|straight
           --corners round|sharp --border shadow|white-black|black
-          --border-color <c>     --text-color <c>
+          --border-color <c>     --text-color <c>     --close-color <c>     --close-x-color <c>
 
         行为：
           --duration <sec>       非负有限秒数，0 表示不限时
@@ -605,8 +658,21 @@ public static class ArgParser
 
         通用：
           --json                 结构化输出
+          --lang en|zh           帮助文本语言；缺省看 AGENTPOINTER_LANG，再按 UI 语言（zh-* 中文，否则英文）
           --dry-run              验证目标或预览技能安装路径，不绘制/写文件
           --help --version
+
+        install-skill 选项：
+          --claude               只装到 ~/.claude/skills/agentpointer
+          --codex                只装到 ~/.agents/skills/agentpointer（Codex）
+          都不给                 两个都装
+          --force                目标文件已存在且内容不同时覆盖（默认跳过，并提示重跑加 --force）
+          --add-path             把 CLI 所在目录加入用户 PATH（HKCU，保留原值类型）并广播环境变更，
+                                 之后请新开一个终端
+          状态                   installed 新装 / up-to-date 已最新 / exists 已存在内容不同被跳过 /
+                                 updated 已覆盖；四种情况都返回 0
+          --add-path 的 path 字段 added 新加 / already 已存在 / skipped 跳过
+          --dry-run 只报告每个目标的计划状态，不写文件、不改 PATH
 
         尚不支持：
           --follow --png --edge-color
@@ -622,5 +688,175 @@ public static class ArgParser
 
         环境变量：
           CLAUDE_PID / BIGARROW_OWNER_PID   绑定 agent PID，箭头随它退出，stop 按此隔离
+          AGENTPOINTER_LANG                 en / zh，帮助文本语言
         """;
+
+    /// <summary>
+    /// 英文帮助。它和 <see cref="HelpTextZh"/> 必须覆盖同一批参数——
+    /// 少一个选项就是一种语言下的静默功能缺失（HelpTextTests 逐项比对）。
+    /// </summary>
+    public static string HelpTextEn => """
+        agentpointer — let an AI agent point at things on your Windows screen
+
+        Usage: agentpointer <command> [options]
+
+        Commands:
+          point          draw the arrow and wait for it to end (default 8 s)
+          start          draw the arrow in the background and return (default 300 s, 0 = no limit)
+          stop           remove the arrows of the same owner; without an owner only unowned arrows
+                         --all clears every arrow in this Windows session
+                         --hook needs an owner and is silent (Claude Code UserPromptSubmit hook)
+          elements       list what a window exposes to --element; filter with --app/--window, --role, --match
+          doctor         version, monitors, DPI, overlay styles and hit testing (does not prove click delivery)
+          install-skill  install into ~/.claude/skills/agentpointer and ~/.agents/skills/agentpointer
+
+        Targets (mutually exclusive, give one):
+          --at X,Y               global physical pixels, (0,0) at the primary monitor's top-left, negatives ok
+          --rect X,Y,W,H         physical pixel rectangle, points at its centre
+          --mouse                the current mouse position
+          --window App[:title]   match by process name plus an optional window title, does not steal focus
+          --app App[:title]      same as --window
+          --element <label>      UI Automation element name, needs --app/--window (else the foreground
+                                 window); the arrow is drawn on the element's bounding box
+          --role <type>          restrict --element or elements to a control type (button / menuitem / edit)
+          --anchor center|title  window anchor
+          --display N            1-based, numbering as in doctor; for at/rect the coordinates are local to
+                                 that monitor, for window/mouse it filters the monitor
+          --logical              read at/rect as logical (96 DPI, same as upstream macOS points) coordinates
+                                 relative to --display (default primary), then convert to physical pixels
+
+        Appearance:
+          --text <s>             text on the sign; {{value}} becomes a clickable copy button (copy, arrow stays)
+          --from <side>          auto(default)/left/right/top/bottom/top-left/top-right/bottom-left/bottom-right
+          --color <name|#hex>    red orange yellow green teal blue purple pink black white, #RRGGBB or #RGB
+          --size S|M|L           --style arrow           --shape bend|straight
+          --corners round|sharp  --border shadow|white-black|black
+          --border-color <c>     --text-color <c>     --close-color <c>     --close-x-color <c>
+
+        Behaviour:
+          --duration <sec>       finite, non-negative seconds; 0 means no limit
+          --raise                compatibility placeholder (window/element targets are raised by default)
+          --no-raise             do not raise the target window, keep the current focus
+          --no-animation         no entrance / breathing / fade animation
+          --close-button         draw a round x at the right end of the sign; clicking it ends the arrow
+          --until-click          end when the human clicks the target; the click still reaches the app
+          --until-any-click      end on any click anywhere
+          --say                  speak the sign when it appears ({{ }} removed, the bare value is spoken)
+          --voice <name>         voice for --say, matched by name substring; unknown name warns and falls back
+          --flash                blink the target window's taskbar button 3 times when it is not in front
+          --notify               also show a Windows notification (title AgentPointer)
+
+        install-skill options:
+          --claude               install only into ~/.claude/skills/agentpointer
+          --codex                install only into ~/.agents/skills/agentpointer (Codex)
+          neither                install into both
+          --force                overwrite a destination whose content differs (otherwise it is skipped)
+          --add-path             add the CLI's directory to the user PATH (HKCU, value type preserved) and
+                                 broadcast the environment change; open a new terminal afterwards
+          status                 installed / up-to-date / exists (skipped, rerun with --force) / updated;
+                                 all four exit with code 0
+          path in JSON           added / already / skipped
+          --dry-run              report the planned status of every destination, write nothing, change no PATH
+
+        Click interaction:
+          clicking the sign or the shaft ends the arrow at once; the target and the empty pixels stay
+          click-through to the app below
+          a {{value}} chip only copies the value (the arrow stays; the icon turns back after ~1.5 s)
+          stop --hook is silent, never writes stdout and always exits 0
+          ~/.claude/settings.json: {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command",
+          "command":"agentpointer stop --hook"}]}]}}
+
+        Common:
+          --json                 structured output
+          --lang en|zh           help language; next comes AGENTPOINTER_LANG, then the UI language
+                                 (zh-* Chinese, anything else English)
+          --dry-run              validate the target or preview skill installation, draw/write nothing
+          --help --version
+
+        Not supported yet:
+          --follow --png --edge-color
+          --style ring|box, --shape zigzag|spiral, other anchors
+          those compatibility flags are accepted and reported as ineffective in --json
+          --peekaboo / --snapshot are macOS-only and exit with code 2
+
+        Examples:
+          agentpointer point --app notepad --element "File" --role menuitem --text "Click here"
+          agentpointer elements --app notepad --match "file" --json
+
+        Exit codes: 0 ok  2 bad input  3 target not found  4 permission/desktop unavailable  5 unsupported  6 internal error
+
+        Environment:
+          CLAUDE_PID / BIGARROW_OWNER_PID   bind an agent PID: the arrow dies with it, stop is scoped to it
+          AGENTPOINTER_LANG                 en / zh, help text language
+        """;
+
+    /// <summary>
+    /// 帮助文本的语言选择：显式 <c>--lang en|zh</c> 优先，其次是环境变量 <c>AGENTPOINTER_LANG</c>，
+    /// 最后按 UI 语言（zh-* 中文，其余英文）。取值非法一律当作没给。
+    /// </summary>
+    public static string HelpFor(string? lang, CultureInfo? ui)
+    {
+        if (TryNormalizeLanguage(lang, out var explicitLang))
+        {
+            return explicitLang == "zh" ? HelpTextZh : HelpTextEn;
+        }
+
+        if (TryNormalizeLanguage(Environment.GetEnvironmentVariable("AGENTPOINTER_LANG"), out var fromEnvironment))
+        {
+            return fromEnvironment == "zh" ? HelpTextZh : HelpTextEn;
+        }
+
+        var chinese = ui is { } culture
+            && culture.TwoLetterISOLanguageName.Equals("zh", StringComparison.OrdinalIgnoreCase);
+        return chinese ? HelpTextZh : HelpTextEn;
+    }
+
+    /// <summary>
+    /// 从原始参数里取 <c>--lang</c>：走帮助路径时参数还没进字典，调用方需要自己扫一遍。
+    /// 缺失或取值非法都返回 null（非法取值在 <see cref="Parse"/> 里已经退过 2）。
+    /// </summary>
+    public static string? LanguageFromArgs(string[]? args)
+    {
+        if (args is null) return null;
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            var token = args[index];
+
+            if (token.StartsWith("--lang=", StringComparison.Ordinal))
+            {
+                if (TryNormalizeLanguage(token["--lang=".Length..], out var inline)) return inline;
+                continue;
+            }
+
+            if (!string.Equals(token, "--lang", StringComparison.Ordinal)) continue;
+
+            if (index + 1 < args.Length && TryNormalizeLanguage(args[index + 1], out var next)) return next;
+            index++;
+        }
+
+        return null;
+    }
+
+    /// <summary>归一化 --lang：en / zh，大小写无关，也接受 en-US / zh-CN 这类区域写法。</summary>
+    internal static bool TryNormalizeLanguage(string? raw, out string? normalized)
+    {
+        normalized = null;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        var value = raw.Trim().ToLowerInvariant().Replace('_', '-');
+        if (value == "en" || value.StartsWith("en-", StringComparison.Ordinal))
+        {
+            normalized = "en";
+            return true;
+        }
+
+        if (value == "zh" || value.StartsWith("zh-", StringComparison.Ordinal))
+        {
+            normalized = "zh";
+            return true;
+        }
+
+        return false;
+    }
 }
