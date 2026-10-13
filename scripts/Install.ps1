@@ -38,7 +38,7 @@ if (-not $NoPath) {
     }
 }
 if ($InstallSkills -and -not $NoSkill) {
-    & $executable install-skill
+    & $executable install-skill --force
     if ($LASTEXITCODE -ne 0) { throw 'Skill installation failed.' }
 }
 if (-not $NoShortcut) {

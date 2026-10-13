@@ -234,7 +234,7 @@ public partial class MainWindow : Window
         string? error = null;
         try
         {
-            using var response = ParseResponse(await RunCliAsync("install-skill", "--json"));
+            using var response = ParseResponse(await RunCliAsync("install-skill", "--force", "--json"));
         }
         catch (Exception ex) { error = ex.Message; }
         finally
