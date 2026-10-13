@@ -118,6 +118,11 @@ internal static class Program
 
         try
         {
+            // --element 的 UI Automation 遍历可能被一次卡住的跨进程调用拖过 5 秒，而 5 秒
+            // 预算买的是"窗口已经画出来"。所以元素先在父进程里解析成矩形，再交给后台
+            // 子进程：UIA 完全不进那 5 秒，也就不可能再把它撑爆。
+            var resolved = command.Target.Kind == TargetKind.Element ? ResolveElementForChild(command) : null;
+
             var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法确定程序路径。");
             var arguments = new List<string> { executable };
             if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
@@ -133,6 +138,15 @@ internal static class Program
                 .ToDictionary(e => (string)e.Key, e => (string)e.Value!, StringComparer.OrdinalIgnoreCase);
             environment[ShownSignal.EnvironmentVariable] = eventName;
             environment[ShownSignal.ResultEnvironmentVariable] = resultPath;
+
+            if (resolved is not null)
+            {
+                var bounds = resolved.Bounds;
+                environment[ResolvedTarget.RectVariable] = $"{bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}";
+                environment[ResolvedTarget.ElementVariable] = JsonSerializer.Serialize(resolved.Element, JsonOptions);
+                environment[ResolvedTarget.RaisedVariable] =
+                    resolved.Raised is { } didRaise ? (didRaise ? "true" : "false") : string.Empty;
+            }
             environmentBlock = System.Runtime.InteropServices.Marshal.StringToHGlobalUni(
                 string.Join("\0", environment.OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
                     .Select(e => e.Key + "=" + e.Value)) + "\0\0");
@@ -214,6 +228,79 @@ internal static class Program
         return result.Append('"').ToString();
     }
 
+    /// <summary>
+    /// <c>start --element</c>：在父进程里把整套 UI Automation 解析做完（置前也在这里），
+    /// 结果经环境变量交给后台子进程，见 <see cref="ResolvedTarget"/>。
+    /// </summary>
+    private static ResolvedElement ResolveElementForChild(PointerCommand command)
+    {
+        var window = ResolveElementWindow(command);
+        var raised = TryRaiseTarget(window.Handle, command);
+        var element = ElementFinder.Find(window.Handle, command.Target.ElementQuery!, command.Target.Role, window.Title);
+
+        return new ResolvedElement(
+            element,
+            new Rectangle(element.X, element.Y, element.Width, element.Height),
+            raised);
+    }
+
+    /// <summary>父进程解析好的元素目标。</summary>
+    private sealed record ResolvedElement(ElementInfo Element, Rectangle Bounds, bool? Raised);
+
+    /// <summary>
+    /// 父进程把已解析的元素目标交给 <c>--keep-alive</c> 子进程用的环境变量。
+    /// 名字只在本程序内部使用，与 <see cref="ShownSignal"/> 的两个事件变量同一路数。
+    /// </summary>
+    private static class ResolvedTarget
+    {
+        public const string RectVariable = "AGENTPOINTER_RESOLVED_RECT";
+        public const string ElementVariable = "AGENTPOINTER_RESOLVED_ELEMENT";
+        public const string RaisedVariable = "AGENTPOINTER_RESOLVED_RAISED";
+
+        /// <summary>全局物理像素矩形；没有就返回 false，子进程自己去做 UIA。</summary>
+        public static bool TryRead(out Rectangle rect, out ElementInfo? element, out bool? raised)
+        {
+            rect = Rectangle.Empty;
+            element = null;
+            raised = null;
+
+            var raw = Environment.GetEnvironmentVariable(RectVariable);
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+
+            var parts = raw.Split(',');
+            if (parts.Length != 4 ||
+                !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var x) ||
+                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var y) ||
+                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) ||
+                !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
+            {
+                return false;
+            }
+
+            rect = new Rectangle(x, y, w, h);
+
+            var elementJson = Environment.GetEnvironmentVariable(ElementVariable);
+            if (!string.IsNullOrWhiteSpace(elementJson))
+            {
+                try
+                {
+                    element = JsonSerializer.Deserialize<ElementInfo>(elementJson);
+                }
+                catch (JsonException)
+                {
+                    // 解析不出来只影响 --json 里回显的元素，目标本身照旧
+                }
+            }
+
+            if (bool.TryParse(Environment.GetEnvironmentVariable(RaisedVariable), out var didRaise))
+            {
+                raised = didRaise;
+            }
+
+            return true;
+        }
+    }
+
     private static int RunPoint(PointerCommand command)
     {
         if (MonitorService.IsSecureOrLockedDesktop())
@@ -227,7 +314,8 @@ internal static class Program
         using var manager = new OverlayManager();
 
         var target = ResolveTarget(
-            manager, command, out var element, out var targetRect, out var targetWindow, out var raised);
+            manager, command, out var element, out var targetRect, out var targetWindow, out var raised,
+            out var preResolved);
 
         var display = ToZeroBased(command.Target.DisplayIndex);
         if (display is { } index && !MonitorService.TryFromIndex(index, manager.Monitors, out _))
@@ -240,7 +328,8 @@ internal static class Program
 
         // --logical：把 at/rect 从 96 DPI 逻辑坐标换算成全局物理像素（上游 macOS 的 point 语义）。
         // 换算以 --display 指定的屏为参照，缺省用主屏。
-        if (command.Target.Logical)
+        // 父进程解析好的元素矩形已经是全局物理像素，不能再换算第二次。
+        if (command.Target.Logical && !preResolved)
         {
             var logicalMonitor = display is { } logicalIndex
                 ? manager.Monitors[logicalIndex]
@@ -554,15 +643,18 @@ internal static class Program
     /// <c>--mouse</c> 没有窗口，返回 <see cref="IntPtr.Zero"/>），供 <c>--flash</c> 闪任务栏按钮。</para>
     /// <para><paramref name="raised"/> 是 <c>--raise</c> 的结果：null 表示没有尝试置前
     /// （没开 --raise、--dry-run 或目标没有窗口），false 表示尝试了但被前台锁挡住。</para>
+    /// <para><paramref name="preResolved"/> 为 true 表示目标矩形是父进程算好的（<c>start
+    /// --element</c>），这里一次 UI Automation 都没有发。</para>
     /// </summary>
     private static Point ResolveTarget(
         OverlayManager manager, PointerCommand command,
         out ElementInfo? element, out Rectangle targetRect, out IntPtr targetWindow,
-        out bool? raised)
+        out bool? raised, out bool preResolved)
     {
         element = null;
         targetWindow = IntPtr.Zero;
         raised = null;
+        preResolved = false;
         var target = command.Target;
 
         switch (target.Kind)
@@ -618,6 +710,19 @@ internal static class Program
 
             case TargetKind.Element:
             {
+                // start 的父进程可能已经把 UI Automation 跑完了（见 ResolveElementForChild）：
+                // 直接用它留下的全局矩形，子进程一次 UIA 调用都不用发。
+                if (ResolvedTarget.TryRead(out var resolvedRect, out var resolvedElement, out var resolvedRaised))
+                {
+                    element = resolvedElement;
+                    targetRect = resolvedRect;
+                    raised = resolvedRaised;
+                    preResolved = true;
+                    return new Point(
+                        resolvedRect.Left + resolvedRect.Width / 2,
+                        resolvedRect.Top + resolvedRect.Height / 2);
+                }
+
                 var window = ResolveElementWindow(command);
 
                 // 与窗口目标一致：只在显式 --raise 时置前，置前失败不算致命
@@ -919,7 +1024,10 @@ internal static class Program
 
         var raised = TryRaiseTarget(window.Handle, command);
 
-        var all = ElementFinder.Collect(window.Handle);
+        // elements 要的是完整清单，多给两秒；等不到就如实报 truncated，别让 agent
+        // 以为手里的就是全部。
+        var scan = ElementFinder.CollectDetailed(window.Handle, timeout: ElementFinder.ElementsTimeout);
+        var all = scan.Elements;
 
         var roleFilter = string.IsNullOrWhiteSpace(command.Target.Role)
             ? null
@@ -942,6 +1050,7 @@ internal static class Program
                 raised = raised,
                 window = new { title = window.Title, process = window.ProcessName },
                 count = elements.Count,
+                truncated = scan.Truncated,
                 elements = elements.Select(e => new
                 {
                     name = e.Name,

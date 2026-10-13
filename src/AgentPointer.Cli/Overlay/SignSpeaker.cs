@@ -8,9 +8,10 @@ namespace AgentPointer.Cli.Overlay;
 /// <summary>
 /// <c>--say</c>：把牌子上的话念出来。
 ///
-/// <para><b>为什么单独开线程</b>：<see cref="SpeechSynthesizer"/> 不是线程安全的，而且
-/// <c>SpeakAsync</c> 需要有人在同一个线程上泵消息。朗读跑在独立的 STA 后台线程上，
-/// 覆盖层的动画和等待循环一秒都不会被它挡住。</para>
+/// <para><b>为什么单独开线程</b>：<see cref="SpeechSynthesizer"/> 不是线程安全的，SAPI 又是
+/// 套间线程模型。所以合成器的<strong>一切</strong>——构造、挑语音、<c>SpeakAsync</c>、
+/// 等 <c>SpeakCompleted</c>、取消、释放——都发生在同一条专用 STA 后台线程上，UI 线程
+/// 从头到尾一次都不碰它，覆盖层的动画和等待循环一秒也不会被它挡住。</para>
 ///
 /// <para><b>怎么挑语音</b>：<c>--voice</c> 按名称子串匹配已安装语音；没给或没匹配上，
 /// 文本含 CJK 就优先中文语音、否则优先英文语音，最后退到系统默认。</para>
@@ -20,30 +21,21 @@ namespace AgentPointer.Cli.Overlay;
 /// </summary>
 internal sealed class SignSpeaker : IDisposable
 {
-    private readonly SpeechSynthesizer _synth;
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _finished = new(false);
-    private readonly ManualResetEventSlim _spoken = new(false);
+    private readonly ManualResetEventSlim _cancel = new(false);
+    private readonly string _spokenText;
+    private readonly string? _voiceName;
     private readonly bool _json;
     private int _disposed;
 
-    private SignSpeaker(SpeechSynthesizer synth, string spoken, string? voiceName, bool json)
+    private SignSpeaker(string spoken, string? voiceName, bool json)
     {
-        _synth = synth;
+        _spokenText = spoken;
+        _voiceName = voiceName;
         _json = json;
 
-        try
-        {
-            SelectVoice(synth, spoken, voiceName, json);
-        }
-        catch (Exception ex)
-        {
-            Warn(json, Lang.T(
-                $"语音配置失败，改用系统默认语音：{ex.Message}",
-                $"Voice configuration failed, falling back to the system default: {ex.Message}"));
-        }
-
-        _thread = new Thread(() => Speak(spoken)) { IsBackground = true, Name = "agentpointer-speech" };
+        _thread = new Thread(Run) { IsBackground = true, Name = "agentpointer-speech" };
         _thread.SetApartmentState(ApartmentState.STA);
         _thread.Start();
     }
@@ -54,39 +46,69 @@ internal sealed class SignSpeaker : IDisposable
         var spoken = SpeechText.ToSpeakable(text);
         if (spoken.Length == 0) return null;
 
-        SpeechSynthesizer synth;
         try
         {
-            synth = new SpeechSynthesizer();
-        }
-        catch (Exception ex)
-        {
-            Warn(json, Lang.T(
-                $"没有可用的语音合成器：{ex.Message}", $"No speech synthesizer available: {ex.Message}"));
-            return null;
-        }
-
-        try
-        {
-            return new SignSpeaker(synth, spoken, voiceName, json);
+            return new SignSpeaker(spoken, voiceName, json);
         }
         catch (Exception ex)
         {
             Warn(json, Lang.T($"朗读未能启动：{ex.Message}", $"Could not start speaking: {ex.Message}"));
-            synth.Dispose();
             return null;
         }
     }
 
-    private void Speak(string spoken)
+    /// <summary>
+    /// 这条线程就是合成器的所有者：在这里建、在这里配、在这里念、在这里等结果、
+    /// 在这里取消、在这里释放。UI 线程只负责 <see cref="Dispose"/> 时置一个标志。
+    /// </summary>
+    private void Run()
     {
+        SpeechSynthesizer? synth = null;
+
         try
         {
-            _synth.SpeakCompleted += OnSpeakCompleted;
-            _synth.SpeakAsync(spoken);
-            // SpeakCompleted 由合成器自己的线程触发（取消时也会触发），这里只是把
-            // 这条后台线程挂住等结果，覆盖层的动画和等待循环一点都不会被挡住。
-            _spoken.Wait();
+            synth = new SpeechSynthesizer();
+
+            try
+            {
+                SelectVoice(synth, _spokenText, _voiceName, _json);
+            }
+            catch (Exception ex)
+            {
+                Warn(_json, Lang.T(
+                    $"语音配置失败，改用系统默认语音：{ex.Message}",
+                    $"Voice configuration failed, falling back to the system default: {ex.Message}"));
+            }
+
+            var completed = new ManualResetEventSlim(false);
+            EventHandler<SpeakCompletedEventArgs> onCompleted = (_, _) => completed.Set();
+            synth.SpeakCompleted += onCompleted;
+
+            try
+            {
+                synth.SpeakAsync(_spokenText);
+
+                // 在这条线程上等：谁也不用泵消息，完成回调自己会把事件置上。
+                // 取消同样只置事件——合成器的每一次调用都留在这条线程里。
+                WaitHandle.WaitAny(new[] { completed.WaitHandle, _cancel.WaitHandle });
+
+                if (_cancel.IsSet)
+                {
+                    try
+                    {
+                        synth.SpeakAsyncCancelAll();
+                    }
+                    catch (Exception)
+                    {
+                        // 取消失败只能算了，反正线程马上就结束
+                    }
+                }
+            }
+            finally
+            {
+                synth.SpeakCompleted -= onCompleted;
+                completed.Dispose();
+            }
         }
         catch (Exception ex)
         {
@@ -96,8 +118,7 @@ internal sealed class SignSpeaker : IDisposable
         {
             try
             {
-                _synth.SpeakCompleted -= OnSpeakCompleted;
-                _synth.Dispose();
+                synth?.Dispose();
             }
             catch (Exception)
             {
@@ -107,8 +128,6 @@ internal sealed class SignSpeaker : IDisposable
             _finished.Set();
         }
     }
-
-    private void OnSpeakCompleted(object? sender, SpeakCompletedEventArgs e) => _spoken.Set();
 
     private static void SelectVoice(SpeechSynthesizer synth, string spoken, string? voiceName, bool json)
     {
@@ -171,22 +190,20 @@ internal sealed class SignSpeaker : IDisposable
         }
     }
 
-    /// <summary>收场：取消正在念的内容，等后台线程退出，绝不让它拖住进程退出。</summary>
+    /// <summary>
+    /// 收场：请朗读线程自己取消（<c>SpeakAsyncCancelAll</c> 只能由它来调），
+    /// 等它退出，绝不让它拖住进程退出。
+    /// </summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-        try
-        {
-            _synth.SpeakAsyncCancelAll();
-        }
-        catch (Exception)
-        {
-        }
+        _cancel.Set();
 
-        if (_finished.Wait(1000))
+        if (_finished.Wait(1500))
         {
             _finished.Dispose();
+            _cancel.Dispose();
         }
     }
 }
