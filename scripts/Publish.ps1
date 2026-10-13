@@ -22,7 +22,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
 Get-ChildItem -LiteralPath $cliStaging -Filter 'agentpointer.*' -File | Copy-Item -Destination $staging -Force
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install.ps1') -Destination $staging
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install.cmd') -Destination $staging
 Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $staging
+Copy-Item -LiteralPath (Join-Path $repoRoot 'README.zh-CN.md') -Destination $staging
 $previewFiles = @('desktop-preview.png', 'overlay-preview.png')
 [IO.Directory]::CreateDirectory((Join-Path $staging 'docs')) | Out-Null
 foreach ($previewFile in $previewFiles) {
@@ -36,4 +38,8 @@ $version = [regex]::Match($programSource, 'public const string Version = "([^"]+
 if (-not $version) { throw 'Could not read the CLI version.' }
 $archive = Join-Path $artifactRoot ("agentpointer-$version-$Runtime.zip")
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -Force
+$checksumPath = Join-Path $artifactRoot "agentpointer-$version-$Runtime.sha256"
+$checksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText($checksumPath, ($checksum + '  ' + [IO.Path]::GetFileName($archive) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
 Write-Output $archive
+Write-Output $checksumPath

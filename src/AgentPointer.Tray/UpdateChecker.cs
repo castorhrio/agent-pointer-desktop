@@ -25,8 +25,8 @@ internal enum UpdateKind
 /// </summary>
 internal static class UpdateChecker
 {
-    /// <summary>发布仓库。换成自己的仓库后检查即生效。</summary>
-    public const string? Repository = null;
+    /// <summary>公开发布仓库。</summary>
+    public const string? Repository = "castorhrio/agent-pointer-desktop";
     public static bool IsConfigured => !string.IsNullOrWhiteSpace(Repository);
 
     private const string ApiHost = "api.github.com";
