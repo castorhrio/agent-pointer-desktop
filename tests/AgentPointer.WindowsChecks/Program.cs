@@ -153,8 +153,10 @@ internal static class Program
             }
             Check(Invoke(cli, null, "point", "--at", "99999,99999", "--dry-run", "--json").Code == 3, "off-screen dry-run fails");
             Check(Invoke(cli, null, "start", "--at", "99999,99999", "--json").Code == 3, "start propagates target failure");
-            Check(Invoke(cli, null, "elements", "--json").Code == 5, "elements is unsupported, not target-not-found");
-            Check(Invoke(cli, null, "point", "--element", "Allow", "--json").Code == 5, "element targeting is unsupported");
+            Check(Invoke(cli, null, "elements", "--app", "NoSuchApp_AgentPointerCheck", "--json").Code == 3, "elements on a missing app is target-not-found");
+            Check(Invoke(cli, null, "point", "--element", "Allow", "--app", "NoSuchApp_AgentPointerCheck", "--json").Code == 3, "element on a missing app is target-not-found");
+            Check(Invoke(cli, target.Id, "elements", "--app", "AgentPointer.WindowsChecks", "--json").Code == 0, "elements lists the fixture window via UI Automation");
+            Check(Invoke(cli, null, "point", "--mouse", "--follow", "--json").Code == 5, "--follow is unsupported (exit 5)");
 
             var owned = Invoke(cli, target.Id, "start", "--at", targetPoint, "--duration", "30", "--json");
             Check(owned.Code == 0, "owner-exit fixture starts");
