@@ -1,6 +1,5 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
-using System.Text;
 using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 using AgentPointer.Core.Rendering;
@@ -262,7 +261,10 @@ internal static class OverlayRenderer
         g.TextRenderingHint = TextRenderingHint.AntiAlias;
 
         using var layout = BuildTextLayout(g, frame, scale);
-        return layout.Chips;
+        return layout.Layout.Chips
+            .Select(chip => new SignChip(
+                new RectangleF(chip.X, chip.Y, chip.Width, chip.Height), chip.Value, chip.Index))
+            .ToArray();
     }
 
     /// <summary>命中判定。关闭按钮优先于牌子，箭头不算——那里点下去应该给到目标。</summary>
@@ -340,23 +342,26 @@ internal static class OverlayRenderer
 
         // 正文按 run 排：普通文字一段段画，{{value}} 画成可点的复制芯片
         using var layout = BuildTextLayout(g, frame, s);
+        // 普通文字不裁剪、不省略：矩形宽度就是量出来的宽度（换行已由 SignLayout 决定），
+        // 再套 EllipsisCharacter 会把紧贴矩形边缘的那一段整个吞掉。
         using var format = new StringFormat
         {
             Alignment = StringAlignment.Near,
             LineAlignment = StringAlignment.Near,
-            Trimming = StringTrimming.EllipsisCharacter,
-            FormatFlags = StringFormatFlags.LineLimit,
+            Trimming = StringTrimming.None,
+            FormatFlags = StringFormatFlags.NoWrap,
         };
 
-        foreach (var run in layout.Runs)
+        foreach (var run in layout.Layout.Runs)
         {
-            if (run.Segment.IsValue)
+            if (run.IsValue)
             {
                 DrawValueChip(g, frame, run, layout.Font, textBrush, outline, s);
                 continue;
             }
 
-            g.DrawString(run.Segment.Text, layout.Font, textBrush, run.Rect, format);
+            g.DrawString(run.Text, layout.Font, textBrush,
+                new RectangleF(run.X, run.Y, run.Width, run.Height), format);
         }
     }
 
@@ -377,14 +382,14 @@ internal static class OverlayRenderer
     private static readonly Color ChipBackground = Color.FromArgb(255, 34, 40, 54);
     private static readonly Color CopyCheckColor = Color.FromArgb(255, 76, 217, 130);
 
-    /// <summary>牌子上的一段文字（普通文字或芯片）及其排布矩形。</summary>
-    private sealed record SignRun(SignSegment Segment, RectangleF Rect, int ValueIndex);
-
+    /// <summary>
+    /// 排版结果：字体（要跟着释放）+ <see cref="SignLayout"/> 算出的纯布局。
+    /// 绘制、命中判定和量尺寸都只看这一份结果，两边矩形永远一致。
+    /// </summary>
     private sealed class SignTextLayout : IDisposable
     {
         public required Font Font { get; init; }
-        public required SignRun[] Runs { get; init; }
-        public required SignChip[] Chips { get; init; }
+        public required SignLayoutResult Layout { get; init; }
 
         public void Dispose() => Font.Dispose();
     }
@@ -424,30 +429,14 @@ internal static class OverlayRenderer
             CloseButton: closeButton);
 
         using var layout = BuildTextLayout(g, frame, s);
-        var area = SignTextArea(frame, s);
 
-        var contentWidth = 0f;
-        var bottom = area.Top;
-        var lineHeight = 0f;
-
-        foreach (var run in layout.Runs)
-        {
-            contentWidth = MathF.Max(contentWidth, run.Rect.Right - area.Left);
-            bottom = MathF.Max(bottom, run.Rect.Bottom);
-            lineHeight = MathF.Max(lineHeight, run.Rect.Height);
-        }
-
-        var lines = lineHeight > 0f
-            ? Math.Max(1, (int)Math.Round((bottom - area.Top) / lineHeight))
-            : 0;
-
+        // 尺寸直接取自同一份排版结果：量的是要画的那几段，不会各算各的
         var size = new Size(
-            (int)Math.Ceiling(contentWidth + pad * 2 + closeReserve),
+            (int)Math.Ceiling(layout.Layout.ContentWidth + pad * 2 + closeReserve),
             (int)Math.Ceiling(
-                Math.Min(lines, ArrowMetrics.MaximumLines) * lineHeight
-                + PointerStyle.SignPadY * 2 + PointerStyle.SignHeaderHeight));
+                layout.Layout.ContentHeight + PointerStyle.SignPadY * 2 + PointerStyle.SignHeaderHeight));
 
-        return (size, lines > ArrowMetrics.MaximumLines);
+        return (size, layout.Layout.Truncated);
     }
 
     /// <summary>
@@ -471,6 +460,10 @@ internal static class OverlayRenderer
     /// 把牌子正文排成若干 run：空白与 CJK 处都可以换行，芯片整体不拆开。
     /// 含 <c>{{value}}</c> 时行高至少要装得下芯片里的图标。
     /// </summary>
+    /// <summary>
+    /// 牌子的正文排版：选字体、把"量一段文字"作为委托交给 <see cref="SignLayout"/>，
+    /// 行的折法与矩形全部来自那份纯布局——绘制与测量用同一份数据。
+    /// </summary>
     private static SignTextLayout BuildTextLayout(Graphics g, RenderFrame frame, float s)
     {
         var area = SignTextArea(frame, s);
@@ -480,111 +473,25 @@ internal static class OverlayRenderer
         var fontPx = frame.SignFontSize * s / (g.DpiX / 96f);
         var font = ResolveFont(fontPx, HasCjk(frame.Text));
 
-        var segments = SignText.Parse(frame.Text);
-        var lineHeight = font.GetHeight(g);
-        if (segments.Any(segment => segment.IsValue))
-        {
-            // 行高至少要装得下芯片里的图标，否则芯片会压到上下两行
-            lineHeight = MathF.Max(lineHeight, (ChipIconSize + 6f) * s);
-        }
+        var layout = SignLayout.Build(
+            frame.Text,
+            token => g.MeasureString(token, font).Width,
+            area.Left,
+            area.Top,
+            area.Width,
+            font.GetHeight(g),
+            new SignChipStyle(ChipPadX * s, ChipGap * s, ChipIconSize * s, ChipMargin * s),
+            ArrowMetrics.MaximumLines);
 
-        var runs = new List<SignRun>();
-        var chips = new List<SignChip>();
-        var x = area.Left;
-        var top = area.Top;
-        var valueIndex = 0;
-
-        void Wrap(float width)
-        {
-            if (x + width > area.Right && x > area.Left)
-            {
-                x = area.Left;
-                top += lineHeight;
-            }
-        }
-
-        foreach (var segment in segments)
-        {
-            if (segment.IsValue)
-            {
-                var textWidth = g.MeasureString(segment.Text, font).Width;
-                var width = ChipPadX * 2 * s + textWidth + ChipGap * s + ChipIconSize * s;
-                Wrap(width + ChipMargin * s);
-
-                var rect = new RectangleF(x + ChipMargin * s, top, width, lineHeight);
-                runs.Add(new SignRun(segment, rect, valueIndex));
-                chips.Add(new SignChip(rect, segment.Text, valueIndex));
-
-                valueIndex++;
-                x = rect.Right + ChipMargin * s;
-                continue;
-            }
-
-            foreach (var token in Tokenize(segment.Text))
-            {
-                var width = g.MeasureString(token, font).Width;
-                Wrap(width);
-
-                var rect = new RectangleF(x, top, width, lineHeight);
-                runs.Add(new SignRun(new SignSegment(token, false), rect, -1));
-                x = rect.Right;
-            }
-        }
-
-        return new SignTextLayout
-        {
-            Font = font,
-            Runs = runs.ToArray(),
-            Chips = chips.ToArray(),
-        };
+        return new SignTextLayout { Font = font, Layout = layout };
     }
-
-    /// <summary>
-    /// 切词：拉丁词按空白断，CJK 逐字断（中文没有空格，不逐字断就永远换不了行）。
-    /// 空白挂在上一段尾部，拼回去仍是原文。
-    /// </summary>
-    private static IEnumerable<string> Tokenize(string text)
-    {
-        var builder = new StringBuilder();
-
-        foreach (var c in text)
-        {
-            if (char.IsWhiteSpace(c))
-            {
-                builder.Append(c);
-                continue;
-            }
-
-            if (IsBreakable(c))
-            {
-                if (builder.Length > 0)
-                {
-                    yield return builder.ToString();
-                    builder.Clear();
-                }
-
-                yield return c.ToString();
-                continue;
-            }
-
-            builder.Append(c);
-        }
-
-        if (builder.Length > 0) yield return builder.ToString();
-    }
-
-    /// <summary>可逐字换行的字符（CJK 及其标点、假名、全角形式）。</summary>
-    private static bool IsBreakable(char c) => c is
-        >= '\u2E80' and <= '\u303F'
-        or >= '\u3040' and <= '\u30FF'
-        or >= '\uF900' and <= '\uFAFF'
-        or >= '\uFF00' and <= '\uFFEF';
 
     /// <summary>芯片：深色圆角底 + 值文字 + 右侧复制图标（复制成功后变成 ✓）。</summary>
     private static void DrawValueChip(
         Graphics g, RenderFrame frame, SignRun run, Font font, Brush textBrush, Color outline, float s)
     {
-        using var path = RoundedRect(run.Rect, MathF.Min(run.Rect.Height / 2f, 6f * s));
+        var rect = new RectangleF(run.X, run.Y, run.Width, run.Height);
+        using var path = RoundedRect(rect, MathF.Min(rect.Height / 2f, 6f * s));
 
         using (var back = new SolidBrush(ChipBackground))
         {
@@ -597,17 +504,17 @@ internal static class OverlayRenderer
         }
 
         var icon = new RectangleF(
-            run.Rect.Right - ChipPadX * s - ChipIconSize * s,
-            run.Rect.Top + (run.Rect.Height - ChipIconSize * s) / 2f,
+            rect.Right - ChipPadX * s - ChipIconSize * s,
+            rect.Top + (rect.Height - ChipIconSize * s) / 2f,
             ChipIconSize * s,
             ChipIconSize * s);
 
-        var textLeft = run.Rect.Left + ChipPadX * s;
+        var textLeft = rect.Left + ChipPadX * s;
         var textRect = new RectangleF(
             textLeft,
-            run.Rect.Top,
+            rect.Top,
             Math.Max(1f, icon.Left - ChipGap * s - textLeft),
-            run.Rect.Height);
+            rect.Height);
 
         using (var format = new StringFormat
         {
@@ -617,7 +524,7 @@ internal static class OverlayRenderer
             FormatFlags = StringFormatFlags.NoWrap,
         })
         {
-            g.DrawString(run.Segment.Text, font, textBrush, textRect, format);
+            g.DrawString(run.Text, font, textBrush, textRect, format);
         }
 
         if (frame.CopiedChip == run.ValueIndex)
