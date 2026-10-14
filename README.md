@@ -9,13 +9,13 @@ Claude Code / Codex can display an arrow with an action label. You decide and co
 This unofficial port adapts layout algorithms and some CLI conventions from
 [bigarrow](https://github.com/franzenzenhofer/big-arrow-on-the-screen), with a C# / WinForms / WPF overlay and desktop setup panel.
 
-[Download Windows installer](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) · [All releases](https://github.com/castorhrio/agent-pointer-desktop/releases) · [Report an issue](https://github.com/castorhrio/agent-pointer-desktop/issues)
+[Download Windows installer](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64-setup.exe) · [All releases](https://github.com/castorhrio/agent-pointer-desktop/releases) · [Report an issue](https://github.com/castorhrio/agent-pointer-desktop/issues)
 
 ![Desktop app](docs/desktop-preview.png)
 
 ## Status
 
-`v0.1.1` — a single-file Windows installer, system language detection, and a fix for duplicate tray icons during repeated window loading.
+`v0.2.0` — UI Automation element targeting (`--element` / `elements`), click-to-dismiss and `--close-button`, `--until-click`, `stop --hook`, `--say` / `--flash` / `--notify`, `{{value}}` copy buttons, friendly app names, raise by default, `--logical`, bilingual CLI, safer `install-skill`, and tray quick start.
 
 Verified with the actual package: installation into an isolated directory, visible desktop startup,
 a real click through the demo, closing to the tray, reopening a single instance, and language selection. Separate-process
@@ -45,11 +45,11 @@ No .NET installation or development tools are required on the target computer.
 
 | Download | Purpose |
 |---|---|
-| [agentpointer-0.1.1-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) | Recommended: one file with an installation wizard |
-| [Portable ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.zip) | Advanced use: the complete unpacked application |
-| [SHA-256 checksums](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.sha256) | Verify either download |
+| [agentpointer-0.2.0-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64-setup.exe) | Recommended: one file with an installation wizard |
+| [Portable ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64.zip) | Advanced use: the complete unpacked application |
+| [SHA-256 checksums](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64.sha256) | Verify either download |
 
-**Recommended — install.** Run `agentpointer-0.1.1-win-x64-setup.exe` and follow the wizard.
+**Recommended — install.** Run `agentpointer-0.2.0-win-x64-setup.exe` and follow the wizard.
 It selects Chinese or English from your Windows display language, lets you choose an installation directory,
 creates desktop and Start-menu shortcuts, and offers to open the app when finished.
 The default directory is `%LOCALAPPDATA%\Programs\AgentPointer`. No administrator rights are required.

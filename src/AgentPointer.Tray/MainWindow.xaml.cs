@@ -599,5 +599,5 @@ public partial class MainWindow : Window
 
 internal static class AgentPointerVersion
 {
-    public const string Current = "0.1.1";
+    public const string Current = "0.2.0";
 }

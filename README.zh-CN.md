@@ -9,13 +9,13 @@ Claude Code / Codex 发起指引，箭头指出位置并说明该做什么，你
 产品基于 [bigarrow](https://github.com/franzenzenhofer/big-arrow-on-the-screen) 的布局算法与部分 CLI 约定。
 这是非官方 Windows 移植，使用 C# / WinForms / WPF 实现屏幕覆盖层和桌面接入界面。
 
-[下载 Windows 安装程序](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) · [全部版本](https://github.com/castorhrio/agent-pointer-desktop/releases) · [反馈问题](https://github.com/castorhrio/agent-pointer-desktop/issues)
+[下载 Windows 安装程序](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64-setup.exe) · [全部版本](https://github.com/castorhrio/agent-pointer-desktop/releases) · [反馈问题](https://github.com/castorhrio/agent-pointer-desktop/issues)
 
 ![桌面应用](docs/desktop-preview.png)
 
 ## 当前状态
 
-`v0.1.1` — 单文件 Windows 安装程序、跟随系统语言，并修复窗口重复加载时产生多个托盘图标的问题。
+`v0.2.0` — UI Automation 元素定位（`--element` / `elements`）、点击牌子关闭与 `--close-button`、`--until-click`、`stop --hook`、`--say` / `--flash` / `--notify`、`{{value}}` 复制按钮、友好应用名、默认置前、`--logical`、中英双语 CLI、更安全的 `install-skill`，以及托盘快速上手。
 
 已通过实际安装包验证：隔离目录安装、桌面首次打开、体验按钮实际点击、关闭到托盘与
 单实例重新打开与语言选择；另通过独立进程验证点击穿透、`start` 立即返回、owner 隔离、显示器换算及错误码。
@@ -41,11 +41,11 @@ Claude Code / Codex 技能文件的安装状态可检查；真实 agent 会话�
 
 | 下载 | 用途 |
 |---|---|
-| [agentpointer-0.1.1-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64-setup.exe) | 推荐：单个文件，双击进入安装向导 |
-| [便携 ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.zip) | 高级用法：完整解压后的程序目录 |
-| [SHA-256 校验文件](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.1.1-win-x64.sha256) | 校验安装程序或 ZIP 是否完整 |
+| [agentpointer-0.2.0-win-x64-setup.exe](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64-setup.exe) | 推荐：单个文件，双击进入安装向导 |
+| [便携 ZIP](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64.zip) | 高级用法：完整解压后的程序目录 |
+| [SHA-256 校验文件](https://github.com/castorhrio/agent-pointer-desktop/releases/latest/download/agentpointer-0.2.0-win-x64.sha256) | 校验安装程序或 ZIP 是否完整 |
 
-**推荐：安装使用。** 双击 `agentpointer-0.1.1-win-x64-setup.exe`，按向导完成安装。
+**推荐：安装使用。** 双击 `agentpointer-0.2.0-win-x64-setup.exe`，按向导完成安装。
 向导根据 Windows 显示语言使用中文或英文，可选择安装目录，创建桌面与开始菜单快捷方式，
 完成后可直接打开应用。默认目录为 `%LOCALAPPDATA%\Programs\AgentPointer`，无需管理员权限。
 应用首次启动默认跟随 Windows 显示语言；语言菜单提供「跟随系统 / System」「中文（简体）」和
