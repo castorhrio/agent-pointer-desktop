@@ -93,11 +93,27 @@ internal static class Program
                 var point = opaque!.Value;
                 GetWindowThreadProcessId(WindowFromPoint(point), out var receiver);
                 Check(receiver == target.Id, "opaque overlay pixel routes to the separate target process");
+
+                // 点击说明卡片只让箭头消失，点击本身不得落到下层按钮。
                 SetCursorPos(point.X, point.Y);
                 mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
                 mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
-                WaitFor(() => File.Exists(marker + ".clicked"), "real mouse input reaches underlying button");
+                WaitFor(() => !IsAlive(firstPid), "clicking the sign dismisses the arrow");
+                Thread.Sleep(250);
+                Check(!File.Exists(marker + ".clicked"), "sign click does not reach the underlying button");
             }
+
+            // 同一目标点上再起一支箭头；点击卡片与箭杆之外应直达按钮。
+            var clickable = Invoke(cli, Environment.ProcessId, "start", "--at", targetPoint,
+                "--from", "left", "--duration", "30", "--no-animation", "--json");
+            Check(clickable.Code == 0, "click-through fixture starts");
+            var clickablePid = clickable.Json["pid"]!.GetValue<int>();
+            overlays.Add(clickablePid);
+            SetCursorPos(x + width - 60, y + height / 2);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+            WaitFor(() => File.Exists(marker + ".clicked"), "real mouse input reaches underlying button");
+            Check(IsAlive(clickablePid), "clicking through does not dismiss the arrow");
 
             var second = Invoke(cli, target.Id, "start", "--at", targetPoint,
                 "--duration", "30", "--no-animation", "--json");
@@ -106,7 +122,7 @@ internal static class Program
             overlays.Add(secondPid);
             Check(!string.IsNullOrWhiteSpace(second.Json["text"]!.GetValue<string>()), "missing text gets a meaningful default");
             Check(Invoke(cli, Environment.ProcessId, "stop", "--json").Code == 0, "scoped stop succeeds");
-            WaitFor(() => !IsAlive(firstPid), "scoped overlay stops");
+            WaitFor(() => !IsAlive(clickablePid), "scoped overlay stops");
             Check(IsAlive(secondPid), "other owner's overlay remains");
             Check(Invoke(cli, target.Id, "stop", "--hook", "--json").Code == 0, "scoped hook succeeds");
             WaitFor(() => !IsAlive(secondPid), "hook stops scoped overlay");
