@@ -91,12 +91,22 @@ internal static class Program
                 }
                 Check(opaque is not null, "opaque instruction card was rendered");
                 var point = opaque!.Value;
+                // 卡片中心：先找出卡片颜色的包围盒（第一个像素在圆角边缘，可能不在可点区域里）
+                int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
+                for (var py = 20; py < height - 20; py += 2)
+                for (var px = 20; px < width - 20; px += 2)
+                {
+                    var color = capture.GetPixel(px, py);
+                    if (color.R != 28 || color.G != 33 || color.B != 44) continue;
+                    minX = Math.Min(minX, px); minY = Math.Min(minY, py); maxX = Math.Max(maxX, px); maxY = Math.Max(maxY, py);
+                }
+                var cardCenter = new Point(x + (minX + maxX) / 2, y + (minY + maxY) / 2);
                 GetWindowThreadProcessId(WindowFromPoint(point), out var receiver);
                 Check(receiver == target.Id, "opaque overlay pixel routes to the separate target process");
 
                 // 点击说明卡片只让箭头消失，点击本身不得落到下层按钮。
                 // 先悬停：覆盖层每 30 ms 轮询一次光标，悬停后才取消 WS_EX_TRANSPARENT（真人点击前必然先移过去）
-                SetCursorPos(point.X, point.Y);
+                SetCursorPos(cardCenter.X, cardCenter.Y);
                 Thread.Sleep(200);
                 mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
                 mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
