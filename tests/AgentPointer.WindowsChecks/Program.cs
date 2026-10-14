@@ -95,7 +95,9 @@ internal static class Program
                 Check(receiver == target.Id, "opaque overlay pixel routes to the separate target process");
 
                 // 点击说明卡片只让箭头消失，点击本身不得落到下层按钮。
+                // 先悬停：覆盖层每 30 ms 轮询一次光标，悬停后才取消 WS_EX_TRANSPARENT（真人点击前必然先移过去）
                 SetCursorPos(point.X, point.Y);
+                Thread.Sleep(200);
                 mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
                 mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
                 WaitFor(() => !IsAlive(firstPid), "clicking the sign dismisses the arrow");
