@@ -1,3 +1,4 @@
+using System.Globalization;
 using AgentPointer.Core;
 using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
@@ -7,12 +8,21 @@ namespace AgentPointer.Core.Tests;
 /// <summary>
 /// 参数契约测试。目标是锁死"与上游 bigarrow 的 CLI 兼容性"——
 /// 这些用例一旦失败，就意味着已有 agent 的脚本会崩。
+///
+/// <para>语言是进程级静态状态，所以本类与 LangTests / HelpTextTests 同属 "Lang" 集合；
+/// 断言里的中文子串靠把语言钉成 zh 来保证稳定，而不是改断言。</para>
 /// </summary>
+[Collection("Lang")]
 public class ArgParserTests
 {
-    /// <summary>隔离环境变量，避免测试机上恰好设置了 CLAUDE_PID 影响断言。</summary>
+    public ArgParserTests() => Lang.Configure("zh", _ => null, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 隔离环境变量，避免测试机上恰好设置了 CLAUDE_PID 影响断言；
+    /// 同时把语言固定为中文（AGENTPOINTER_LANG=zh），断言才能比对中文消息。
+    /// </summary>
     private static ParseResult Parse(params string[] args) =>
-        ArgParser.Parse(args, _ => null);
+        ArgParser.Parse(args, name => name == "AGENTPOINTER_LANG" ? "zh" : null);
 
     private static ParseResult Ok(params string[] args)
     {
@@ -302,11 +312,41 @@ public class ArgParserTests
     }
 
     [Fact]
-    public void 窗口默认不抢焦点且只有显式raise才置前()
+    public void 窗口与元素目标默认置前_no_raise才关闭()
     {
-        Assert.False(Ok("point", "--window", "Notepad").Command!.Behavior.Raise);
-        Assert.True(Ok("point", "--window", "Notepad", "--raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--window", "Notepad").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--element", "Allow", "--app", "Notepad").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--window", "Notepad", "--no-raise").Command!.Behavior.Raise);
         Assert.False(Ok("point", "--window", "Notepad", "--raise", "--no-raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--window", "Notepad", "--raise").Command!.Behavior.Raise);
+        Assert.True(Ok("point", "--element", "Allow", "--no-raise").Command!.Behavior.NoRaise);
+    }
+
+    [Fact]
+    public void 坐标目标永远不置前()
+    {
+        Assert.False(Ok("point", "--at", "1,1").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--rect", "0,0,10,10").Command!.Behavior.Raise);
+        Assert.False(Ok("point", "--mouse").Command!.Behavior.Raise);
+    }
+
+    [Fact]
+    public void logical被解析且只作用于at与rect()
+    {
+        Assert.True(Ok("point", "--at", "10,20", "--logical").Command!.Target.Logical);
+        Assert.True(Ok("point", "--at", "10,20", "--logical", "--display", "2").Command!.Target.Logical);
+        Assert.True(Ok("point", "--rect", "0,0,10,10", "--logical").Command!.Target.Logical);
+        Assert.False(Ok("point", "--at", "10,20").Command!.Target.Logical);
+    }
+
+    [Fact]
+    public void logical配非坐标目标退出码为2()
+    {
+        var r = Parse("point", "--window", "Notepad", "--logical");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--logical", r.Error);
+
+        Assert.Equal(ExitCode.BadInput, Parse("point", "--mouse", "--logical").ExitCode);
     }
 
     [Fact]
@@ -435,22 +475,33 @@ public class ArgParserTests
 
     // ---------------- 兼容性：未实现的参数必须被接受 ----------------
 
+    /// <summary>
+    /// 回归用例：这些参数曾经"接受但不生效"，静默成功。现在必须退出码 5，
+    /// agent 才有机会按 skill 的指示去掉参数重试。
+    /// </summary>
     [Theory]
     [InlineData("--follow")]
-    [InlineData("--until-click")]
-    [InlineData("--say")]
     [InlineData("--png")]
-    public void Windows未实现的行为参数被接受而不报错(string flag)
+    public void Windows尚未实现的行为参数退出码为5(string flag)
     {
-        var r = Ok("point", "--at", "1,1", flag);
-        Assert.Contains(flag, r.Command!.Behavior.IneffectiveFlags);
+        var r = Parse("point", "--at", "1,1", flag);
+        Assert.False(r.Ok);
+        Assert.Equal(ExitCode.Unsupported, r.ExitCode);
+        Assert.Contains(flag, r.Error);
+        Assert.Contains("尚未实现", r.Error);
     }
 
     [Fact]
-    public void 未实现参数在json输出里可被识别()
+    public void 未实现参数即使带json也退出码为5()
     {
-        var r = Ok("point", "--at", "1,1", "--follow", "--say");
-        Assert.Equal(2, r.Command!.Behavior.IneffectiveFlags.Count);
+        Assert.Equal(ExitCode.Unsupported, Parse("start", "--at", "1,1", "--follow", "--json").ExitCode);
+        Assert.Equal(ExitCode.Unsupported, Parse("point", "--at", "1,1", "--png").ExitCode);
+    }
+
+    [Fact]
+    public void 不支持的参数不会把命令解析成成功()
+    {
+        Assert.Null(Parse("point", "--at", "1,1", "--follow").Command);
     }
 
     [Fact]
@@ -461,11 +512,86 @@ public class ArgParserTests
     }
 
     [Fact]
-    public void 未实现的关闭按钮与颜色明确标记()
+    public void 边色仍标记为未生效而语音已生效()
     {
-        var r = Ok("point", "--at", "1,1", "--close-button", "--edge-color", "red");
-        Assert.Contains("--close-button", r.Command!.Behavior.IneffectiveFlags);
+        var r = Ok("point", "--at", "1,1", "--voice", "zira", "--edge-color", "red");
+        Assert.DoesNotContain("--voice", r.Command!.Behavior.IneffectiveFlags);
         Assert.Contains("--edge-color", r.Command.Behavior.IneffectiveFlags);
+    }
+
+    // ---------------- 注意力特性：--say / --voice / --flash / --notify ----------------
+
+    [Fact]
+    public void say被解析且不再标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--say");
+        Assert.True(r.Command!.Behavior.Say);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void say默认关闭()
+    {
+        Assert.False(Ok("point", "--at", "1,1").Command!.Behavior.Say);
+    }
+
+    [Fact]
+    public void voice缺少取值退出码为2()
+    {
+        var r = Parse("point", "--at", "1,1", "--voice");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--voice", r.Error);
+    }
+
+    [Fact]
+    public void voice被解析且不标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--say", "--voice", "Microsoft Zira");
+        Assert.Equal("Microsoft Zira", r.Command!.Behavior.Voice);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void flash与notify是开关且默认关闭()
+    {
+        var defaults = Ok("point", "--at", "1,1").Command!.Behavior;
+        Assert.False(defaults.Flash);
+        Assert.False(defaults.Notify);
+
+        var r = Ok("point", "--at", "1,1", "--flash", "--notify");
+        Assert.True(r.Command!.Behavior.Flash);
+        Assert.True(r.Command.Behavior.Notify);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    // ---------------- 点击收场：牌子本身、关闭按钮、点目标 ----------------
+
+    [Fact]
+    public void close_button与until_click已经生效且不再标记为未生效()
+    {
+        var r = Ok("point", "--at", "1,1", "--close-button", "--until-click");
+        Assert.True(r.Command!.Behavior.CloseButton);
+        Assert.True(r.Command.Behavior.UntilClick);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void until_any_click被解析()
+    {
+        var r = Ok("point", "--at", "1,1", "--until-any-click");
+        Assert.True(r.Command!.Behavior.UntilAnyClick);
+        Assert.Empty(r.Command.Behavior.IneffectiveFlags);
+    }
+
+    [Fact]
+    public void hook只允许用于stop()
+    {
+        Assert.True(Ok("stop", "--hook").Command!.StopHook);
+
+        var r = Parse("point", "--at", "1,1", "--hook");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--hook", r.Error);
+        Assert.Equal(ExitCode.BadInput, Parse("doctor", "--hook").ExitCode);
     }
 
     [Fact]
@@ -604,5 +730,99 @@ public class ArgParserTests
         var r = ArgParser.Parse(new[] { "point", "--at", "1,1" }, name => name == "CLAUDE_PID" ? raw : null);
         Assert.True(r.Ok);
         Assert.Null(r.Command!.OwnerPid);
+    }
+
+    // ---------------- --lang ----------------
+
+    [Theory]
+    [InlineData("en")]
+    [InlineData("zh")]
+    [InlineData("EN")]
+    [InlineData("zh-CN")]
+    public void lang接受语言取值且对任何子命令都成立(string raw)
+    {
+        Assert.True(Ok("point", "--at", "1,1", "--lang", raw).Ok);
+        Assert.True(Ok("doctor", "--lang", raw).Ok);
+        Assert.True(Ok("install-skill", "--lang", raw).Ok);
+        Assert.True(Ok("point", "--at", "1,1", $"--lang={raw}").Ok);
+    }
+
+    [Theory]
+    [InlineData("de")]
+    [InlineData("english")]
+    [InlineData("")]
+    public void lang非法取值退出码为2(string raw)
+    {
+        var r = Parse("point", "--at", "1,1", "--lang", raw);
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void lang缺少取值退出码为2()
+    {
+        var r = Parse("point", "--at", "1,1", "--lang");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void help旁边给出非法lang同样退出码为2()
+    {
+        var r = Parse("--help", "--lang", "de");
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains("--lang", r.Error);
+    }
+
+    [Fact]
+    public void 等号写法的非法lang退出码为2()
+    {
+        Assert.Equal(ExitCode.BadInput, Parse("point", "--at", "1,1", "--lang=de").ExitCode);
+    }
+
+    // ---------------- install-skill 专属开关 ----------------
+
+    [Theory]
+    [InlineData("--claude")]
+    [InlineData("--codex")]
+    [InlineData("--force")]
+    [InlineData("--add-path")]
+    public void install专用开关只允许用于install_skill(string flag)
+    {
+        Assert.Equal(CommandKind.InstallSkill, Ok("install-skill", flag).Command!.Kind);
+
+        var r = Parse("point", "--at", "1,1", flag);
+        Assert.Equal(ExitCode.BadInput, r.ExitCode);
+        Assert.Contains(flag, r.Error);
+        Assert.Equal(ExitCode.BadInput, Parse("doctor", flag).ExitCode);
+        Assert.Equal(ExitCode.BadInput, Parse("stop", flag).ExitCode);
+    }
+
+    [Fact]
+    public void install开关默认关闭()
+    {
+        var c = Ok("install-skill").Command!;
+        Assert.False(c.InstallClaude);
+        Assert.False(c.InstallCodex);
+        Assert.False(c.Force);
+        Assert.False(c.AddPath);
+    }
+
+    [Fact]
+    public void install开关被解析()
+    {
+        var c = Ok("install-skill", "--claude", "--force", "--add-path").Command!;
+        Assert.True(c.InstallClaude);
+        Assert.False(c.InstallCodex);
+        Assert.True(c.Force);
+        Assert.True(c.AddPath);
+
+        Assert.True(Ok("install-skill", "--codex").Command!.InstallCodex);
+    }
+
+    [Fact]
+    public void 安装开关不进入未生效列表()
+    {
+        Assert.Empty(Ok("install-skill", "--force", "--add-path").Command!.Behavior.IneffectiveFlags);
     }
 }

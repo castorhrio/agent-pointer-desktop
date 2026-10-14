@@ -16,6 +16,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Grid>
@@ -141,7 +142,75 @@
                 </Grid>
             </Border>
 
-            <Expander Grid.Row="4" Header="{DynamicResource Str.More}" Margin="0,16,0,0"
+            <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,14,0,0">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str.QuickStart}" Style="{StaticResource CardTitle}" />
+                    <TextBlock Text="{DynamicResource Str.QuickStartDescription}" Style="{StaticResource DimText}"
+                               TextWrapping="Wrap" LineHeight="20" Margin="0,0,0,12" />
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="1" FontWeight="SemiBold" Foreground="{StaticResource BrushTextDim}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str.QuickStartStep1}"
+                                   Style="{StaticResource DimText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <Button x:Name="QuickInstallButton" Grid.Column="2"
+                                AutomationProperties.AutomationId="QuickInstall"
+                                Content="{DynamicResource Str.InstallSkills}" Style="{StaticResource GhostButton}"
+                                Margin="12,0,0,0" VerticalAlignment="Center" Click="OnInstallSkills" />
+                    </Grid>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="2" FontWeight="SemiBold" Foreground="{StaticResource BrushTextDim}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str.QuickStartStep2}"
+                                   Style="{StaticResource DimText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <Button x:Name="QuickTryButton" Grid.Column="2" AutomationProperties.AutomationId="QuickTry"
+                                Content="{DynamicResource Str.QuickStartTryIt}" Style="{StaticResource GhostButton}"
+                                Margin="12,0,0,0" VerticalAlignment="Center" Click="OnQuickTry" />
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="3" FontWeight="SemiBold" Foreground="{StaticResource BrushTextDim}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str.QuickStartStep3}"
+                                   Style="{StaticResource DimText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        <Button x:Name="QuickHookButton" Grid.Column="2"
+                                AutomationProperties.AutomationId="QuickCopyHook"
+                                Content="{DynamicResource Str.QuickStartCopyHook}" Style="{StaticResource GhostButton}"
+                                Margin="12,0,0,0" VerticalAlignment="Center" Click="OnQuickCopyHook" />
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="{DynamicResource Str.SampleCommand}" Style="{StaticResource DimText}"
+                                       FontSize="11" />
+                            <TextBlock FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"
+                                       Foreground="{StaticResource BrushTextDim}"
+                                       Text="agentpointer point --app notepad --element &quot;File&quot; --text &quot;Click File&quot;" />
+                        </StackPanel>
+                        <Button x:Name="CopySampleButton" Grid.Column="1"
+                                Content="{DynamicResource Str.CopySampleCommand}" Style="{StaticResource GhostButton}"
+                                Margin="12,0,0,0" VerticalAlignment="Center" Click="OnCopySampleCommand" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Expander Grid.Row="5" Header="{DynamicResource Str.More}" Margin="0,16,0,0"
                       Foreground="{StaticResource BrushTextDim}" FontSize="12">
                 <StackPanel Margin="4,12,0,0">
                     <TextBlock Text="{DynamicResource Str.ScopeNote}" Style="{StaticResource DimText}"
@@ -162,7 +231,7 @@
                 </StackPanel>
             </Expander>
 
-            <Grid Grid.Row="5" Margin="0,18,0,0">
+            <Grid Grid.Row="6" Margin="0,18,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />

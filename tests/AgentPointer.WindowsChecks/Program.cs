@@ -91,13 +91,41 @@ internal static class Program
                 }
                 Check(opaque is not null, "opaque instruction card was rendered");
                 var point = opaque!.Value;
+                // 卡片中心：先找出卡片颜色的包围盒（第一个像素在圆角边缘，可能不在可点区域里）
+                int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
+                for (var py = 20; py < height - 20; py += 2)
+                for (var px = 20; px < width - 20; px += 2)
+                {
+                    var color = capture.GetPixel(px, py);
+                    if (color.R != 28 || color.G != 33 || color.B != 44) continue;
+                    minX = Math.Min(minX, px); minY = Math.Min(minY, py); maxX = Math.Max(maxX, px); maxY = Math.Max(maxY, py);
+                }
+                var cardCenter = new Point(x + (minX + maxX) / 2, y + (minY + maxY) / 2);
                 GetWindowThreadProcessId(WindowFromPoint(point), out var receiver);
                 Check(receiver == target.Id, "opaque overlay pixel routes to the separate target process");
-                SetCursorPos(point.X, point.Y);
+
+                // 点击说明卡片只让箭头消失，点击本身不得落到下层按钮。
+                // 先悬停：覆盖层每 30 ms 轮询一次光标，悬停后才取消 WS_EX_TRANSPARENT（真人点击前必然先移过去）
+                SetCursorPos(cardCenter.X, cardCenter.Y);
+                Thread.Sleep(200);
                 mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
                 mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
-                WaitFor(() => File.Exists(marker + ".clicked"), "real mouse input reaches underlying button");
+                WaitFor(() => !IsAlive(firstPid), "clicking the sign dismisses the arrow");
+                Thread.Sleep(250);
+                Check(!File.Exists(marker + ".clicked"), "sign click does not reach the underlying button");
             }
+
+            // 同一目标点上再起一支箭头；点击卡片与箭杆之外应直达按钮。
+            var clickable = Invoke(cli, Environment.ProcessId, "start", "--at", targetPoint,
+                "--from", "left", "--duration", "30", "--no-animation", "--json");
+            Check(clickable.Code == 0, "click-through fixture starts");
+            var clickablePid = clickable.Json["pid"]!.GetValue<int>();
+            overlays.Add(clickablePid);
+            SetCursorPos(x + width - 60, y + height / 2);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+            WaitFor(() => File.Exists(marker + ".clicked"), "real mouse input reaches underlying button");
+            Check(IsAlive(clickablePid), "clicking through does not dismiss the arrow");
 
             var second = Invoke(cli, target.Id, "start", "--at", targetPoint,
                 "--duration", "30", "--no-animation", "--json");
@@ -106,7 +134,7 @@ internal static class Program
             overlays.Add(secondPid);
             Check(!string.IsNullOrWhiteSpace(second.Json["text"]!.GetValue<string>()), "missing text gets a meaningful default");
             Check(Invoke(cli, Environment.ProcessId, "stop", "--json").Code == 0, "scoped stop succeeds");
-            WaitFor(() => !IsAlive(firstPid), "scoped overlay stops");
+            WaitFor(() => !IsAlive(clickablePid), "scoped overlay stops");
             Check(IsAlive(secondPid), "other owner's overlay remains");
             Check(Invoke(cli, target.Id, "stop", "--hook", "--json").Code == 0, "scoped hook succeeds");
             WaitFor(() => !IsAlive(secondPid), "hook stops scoped overlay");
@@ -125,8 +153,10 @@ internal static class Program
             }
             Check(Invoke(cli, null, "point", "--at", "99999,99999", "--dry-run", "--json").Code == 3, "off-screen dry-run fails");
             Check(Invoke(cli, null, "start", "--at", "99999,99999", "--json").Code == 3, "start propagates target failure");
-            Check(Invoke(cli, null, "elements", "--json").Code == 5, "elements is unsupported, not target-not-found");
-            Check(Invoke(cli, null, "point", "--element", "Allow", "--json").Code == 5, "element targeting is unsupported");
+            Check(Invoke(cli, null, "elements", "--app", "NoSuchApp_AgentPointerCheck", "--json").Code == 3, "elements on a missing app is target-not-found");
+            Check(Invoke(cli, null, "point", "--element", "Allow", "--app", "NoSuchApp_AgentPointerCheck", "--json").Code == 3, "element on a missing app is target-not-found");
+            Check(Invoke(cli, target.Id, "elements", "--app", "AgentPointer.WindowsChecks", "--json").Code == 0, "elements lists the fixture window via UI Automation");
+            Check(Invoke(cli, null, "point", "--mouse", "--follow", "--json").Code == 5, "--follow is unsupported (exit 5)");
 
             var owned = Invoke(cli, target.Id, "start", "--at", targetPoint, "--duration", "30", "--json");
             Check(owned.Code == 0, "owner-exit fixture starts");

@@ -67,6 +67,12 @@ public sealed record TargetSpec
 
     /// <summary>--display N，把坐标解释为第 N 个显示器的局部坐标（1-based，与上游一致）。</summary>
     public int? DisplayIndex { get; init; }
+
+    /// <summary>
+    /// --logical：<c>--at</c> / <c>--rect</c> 的取值是逻辑坐标（96 DPI，上游 macOS 的 point），
+    /// 相对 <see cref="DisplayIndex"/> 指定的屏（缺省主屏），由调用方换算成全局物理像素。
+    /// </summary>
+    public bool Logical { get; init; }
 }
 
 /// <summary>外观参数。尚未实现的样式会在输出中说明回退；上游免费样式不属于付费功能。</summary>
@@ -106,9 +112,13 @@ public sealed record LookSpec
 /// <summary>行为参数。未在 Windows 上实现的参数仍会被解析，但标记为未生效。</summary>
 public sealed record BehaviorSpec
 {
+    /// <summary>--no-raise：明确要求不要动前台窗口，保持当前焦点。</summary>
     public bool NoRaise { get; init; }
 
-    /// <summary>--raise：显式请求将目标窗口置前；默认不抢焦点。</summary>
+    /// <summary>
+    /// 是否把目标窗口置前。窗口 / 元素目标<strong>默认置前</strong>（上游行为）；
+    /// --no-raise 关闭。--raise 仅为兼容保留，不再改变结果。坐标目标永远为 false。
+    /// </summary>
     public bool Raise { get; init; }
 
     /// <summary>--no-animation：直出最终帧，无入场/呼吸/淡出（上游语义，已生效）。</summary>
@@ -121,10 +131,21 @@ public sealed record BehaviorSpec
     public bool UntilAnyClick { get; init; }
 
     public bool CloseButton { get; init; }
+
+    /// <summary>--say：上屏时把牌子上的话念出来（后台线程，覆盖层一秒都不会被挡住）。</summary>
     public bool Say { get; init; }
 
-    /// <summary>--voice：--say 的语音（解析接受，Windows 版未实现）。</summary>
+    /// <summary>
+    /// --voice：--say 使用的语音名，大小写无关的子串匹配；
+    /// 没给或没匹配上就按文本语言挑，再退到系统默认语音。
+    /// </summary>
     public string? Voice { get; init; }
+
+    /// <summary>--flash：目标窗口不在前台时闪 3 次任务栏按钮。</summary>
+    public bool Flash { get; init; }
+
+    /// <summary>--notify：额外弹一条系统通知（标题 AgentPointer）。</summary>
+    public bool Notify { get; init; }
 
     public bool Png { get; init; }
 
@@ -172,4 +193,16 @@ public sealed record PointerCommand
 
     /// <summary>元素匹配用的查询串，elements 子命令用。</summary>
     public string? ElementsMatch { get; init; }
+
+    /// <summary>install-skill --claude：只装 Claude Code 的技能目录。</summary>
+    public bool InstallClaude { get; init; }
+
+    /// <summary>install-skill --codex：只装 Codex 的技能目录。</summary>
+    public bool InstallCodex { get; init; }
+
+    /// <summary>install-skill --force：允许覆盖已存在且内容不同的技能文件。</summary>
+    public bool Force { get; init; }
+
+    /// <summary>install-skill --add-path：把 CLI 所在目录加入用户 PATH。</summary>
+    public bool AddPath { get; init; }
 }

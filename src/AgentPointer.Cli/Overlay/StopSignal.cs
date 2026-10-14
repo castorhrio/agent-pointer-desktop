@@ -10,6 +10,15 @@ public enum StopReason
     OwnerExited,
     DurationElapsed,
     WindowLost,
+
+    /// <summary>用户点了牌子或箭杆，箭头自己收场。</summary>
+    Clicked,
+
+    /// <summary>用户点了牌子上的 ×（--close-button）。</summary>
+    Closed,
+
+    /// <summary>--until-click / --until-any-click：用户点到了目标（或任意位置）。</summary>
+    TargetClicked,
 }
 
 /// <summary>每次 start 使用独立的就绪事件，避免并发启动互相放行。</summary>

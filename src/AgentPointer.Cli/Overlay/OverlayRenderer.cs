@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using AgentPointer.Core.Cli;
 using AgentPointer.Core.Protocol;
 using AgentPointer.Core.Rendering;
 
@@ -18,7 +19,50 @@ internal sealed record RenderFrame(
     LookSpec Look,
     ArrowMetrics Metrics,
     double DpiScale,
-    double AnimScale);
+    double AnimScale,
+    bool CloseButton = false,
+    /// <summary>刚复制成功、正在显示 ✓ 的芯片序号（约 1.5 秒后清空）。</summary>
+    int? CopiedChip = null);
+
+/// <summary>可点区域。<see cref="None"/> 表示该点继续穿透到下层应用。</summary>
+internal enum OverlayHit
+{
+    None,
+    Shaft,
+    Sign,
+    Close,
+
+    /// <summary><c>{{value}}</c> 复制芯片：点它只复制，不收场。</summary>
+    Chip,
+}
+
+/// <summary>一个复制芯片：命中矩形 + 要复制的值 + 出现顺序。</summary>
+internal sealed record SignChip(RectangleF Rect, string Value, int Index);
+
+/// <summary>
+/// 可点区域缓存（窗口客户区坐标）。布局确定后算一次，动画期间不变。
+/// <see cref="Shaft"/> 是已按描边宽度外扩过的区域——用原始细路径判命中，用户几乎点不中。
+/// </summary>
+internal sealed class HitRegions : IDisposable
+{
+    public required GraphicsPath Shaft { get; init; }
+    public required RectangleF Sign { get; init; }
+    public RectangleF? Close { get; init; }
+
+    /// <summary>复制芯片的命中区域，按出现顺序；牌子没有 <c>{{value}}</c> 时为空。</summary>
+    public SignChip[] Chips { get; init; } = Array.Empty<SignChip>();
+
+    /// <summary>箭头尖端（目标点，窗口客户区坐标）。</summary>
+    public required PointF Target { get; init; }
+
+    /// <summary>
+    /// 尖端周围"永远穿透"的圆半径（约 1.5 倍箭头长度）。见
+    /// <see cref="OverlayRenderer.TargetExclusionRadiusFactor"/>。
+    /// </summary>
+    public required float TargetExclusionRadius { get; init; }
+
+    public void Dispose() => Shaft.Dispose();
+}
 
 /// <summary>
 /// 覆盖层渲染器。只负责"把一帧画进 Graphics"，不持有窗口、定时器等任何状态，
@@ -35,6 +79,18 @@ internal sealed record RenderFrame(
 /// </summary>
 internal static class OverlayRenderer
 {
+    /// <summary>--close-button 圆形 × 的直径（逻辑像素）。</summary>
+    internal const float CloseButtonDiameter = 22f;
+
+    /// <summary>
+    /// 尖端排除区半径 = 该系数 × 箭头长度。头部本身和紧挨头部的杆末段都落在圆里，
+    /// 那里点下去必须穿透给下层应用；1.5 倍的余量让"点在目标旁边一点"也不算我们的。
+    /// </summary>
+    internal const float TargetExclusionRadiusFactor = 1.5f;
+
+    /// <summary>× 与牌子边缘、正文之间的留白（逻辑像素）。</summary>
+    internal const float CloseButtonPadding = 8f;
+
     public static void DrawFrame(Graphics g, RenderFrame frame)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -147,6 +203,104 @@ internal static class OverlayRenderer
         }
 
         DrawSign(g, frame, fill, outline, border, s);
+
+        if (frame.CloseButton)
+        {
+            DrawCloseButton(g, frame, outline, s);
+        }
+    }
+
+    // ---------------- 命中区域 ----------------
+
+    /// <summary>
+    /// 计算可点区域（窗口客户区坐标）。<b>布局定下来后只调用一次</b>：
+    /// 入场/呼吸动画只改呈现缩放，不改命中判定。
+    ///
+    /// <para>只包含牌子、箭杆和关闭按钮：目标附近保持穿透，用户点到目标时点击照常送达下层应用。</para>
+    /// </summary>
+    internal static HitRegions ComputeHitRegions(RenderFrame frame, float scale)
+    {
+        var geometry = ArrowGeometry.Compute(frame, scale);
+
+        // 外扩一圈：细箭杆按原始路径判命中，实际上很难点中
+        var widened = (GraphicsPath)geometry.ShaftPath.Clone();
+        var hitWidth = geometry.ShaftWidth + 2 * MathF.Max(PointerStyle.OutlineWidth, 6f) * scale;
+        using (var pen = new Pen(Color.Black, hitWidth)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        })
+        {
+            widened.Widen(pen);
+        }
+
+        geometry.Dispose();
+
+        return new HitRegions
+        {
+            Shaft = widened,
+            Sign = frame.SignRect,
+            Close = frame.CloseButton ? CloseButtonRect(frame.SignRect, scale) : null,
+            Chips = ComputeChips(frame, scale),
+            Target = frame.Target,
+            TargetExclusionRadius = frame.Metrics.HeadLength * TargetExclusionRadiusFactor * scale,
+        };
+    }
+
+    /// <summary>
+    /// 芯片的命中矩形。量文字要一节 <see cref="Graphics"/>，所以单独用一个 1x1 位图；
+    /// 字号公式与 <see cref="BuildTextLayout"/> 完全一致（都按 96 DPI 的位图算），矩形才对得上。
+    /// </summary>
+    private static SignChip[] ComputeChips(RenderFrame frame, float scale)
+    {
+        if (string.IsNullOrWhiteSpace(frame.Text)) return Array.Empty<SignChip>();
+
+        using var probe = new Bitmap(1, 1);
+        using var g = Graphics.FromImage(probe);
+        g.TextRenderingHint = TextRenderingHint.AntiAlias;
+
+        using var layout = BuildTextLayout(g, frame, scale);
+        return layout.Layout.Chips
+            .Select(chip => new SignChip(
+                new RectangleF(chip.X, chip.Y, chip.Width, chip.Height), chip.Value, chip.Index))
+            .ToArray();
+    }
+
+    /// <summary>命中判定。关闭按钮优先于牌子，箭头不算——那里点下去应该给到目标。</summary>
+    internal static OverlayHit HitTest(HitRegions? regions, PointF point)
+    {
+        if (regions is null) return OverlayHit.None;
+
+        // 尖端周围永远穿透，优先级高于牌子与箭杆：目标及其旁边一圈的点击必须送达下层应用，
+        // 否则箭头头部画在目标之上时会把这一次点击吞掉。
+        if (regions.TargetExclusionRadius > 0f)
+        {
+            var dx = point.X - regions.Target.X;
+            var dy = point.Y - regions.Target.Y;
+            if (dx * dx + dy * dy <= regions.TargetExclusionRadius * regions.TargetExclusionRadius)
+            {
+                return OverlayHit.None;
+            }
+        }
+
+        if (regions.Close is { } close && close.Contains(point)) return OverlayHit.Close;
+        if (ChipAt(regions, point) is not null) return OverlayHit.Chip;
+        if (regions.Sign.Contains(point)) return OverlayHit.Sign;
+        return regions.Shaft.IsVisible(point) ? OverlayHit.Shaft : OverlayHit.None;
+    }
+
+    /// <summary>命中的复制芯片序号，没命中返回 null。点芯片只复制，不收场。</summary>
+    internal static int? ChipAt(HitRegions? regions, PointF point)
+    {
+        if (regions is null) return null;
+
+        foreach (var chip in regions.Chips)
+        {
+            if (chip.Rect.Contains(point)) return chip.Index;
+        }
+
+        return null;
     }
 
     // ---------------- 牌子 ----------------
@@ -169,30 +323,16 @@ internal static class OverlayRenderer
             frame.SignRect.Left + 5f * s, frame.SignRect.Bottom - 13f * s);
 
         var pad = PointerStyle.SignPadX * s;
-        var headerHeight = PointerStyle.SignHeaderHeight * s;
-        var top = frame.SignRect.Top + PointerStyle.SignPadY * s;
-        var header = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh"
-            ? "AI 助手提示" : "AI ASSISTANT";
+        var header = Lang.T("AI 助手提示", "AI ASSISTANT");
         using var headerFont = ResolveFont(11f * s / (g.DpiX / 96f), HasCjk(header));
         using var headerBrush = new SolidBrush(Color.FromArgb(163, 177, 198));
-        g.DrawString(header, headerFont, headerBrush, frame.SignRect.Left + pad, top);
+        g.DrawString(header, headerFont, headerBrush, frame.SignRect.Left + pad,
+            frame.SignRect.Top + PointerStyle.SignPadY * s);
 
         if (string.IsNullOrWhiteSpace(frame.Text))
         {
             return;
         }
-
-        // 字号在上游 fontSize 基础上随测量档位修正（MeasureSign 可能缩过字号）；
-        // 含 CJK 的文字显式优选中文字体，避免依赖 GDI+ 的字体替换链（不同机器行为不一致）
-        var fontPx = frame.SignFontSize * s / (g.DpiX / 96f);
-        using var font = ResolveFont(fontPx, HasCjk(frame.Text));
-        using var format = new StringFormat
-        {
-            Alignment = StringAlignment.Near,
-            LineAlignment = StringAlignment.Near,
-            Trimming = StringTrimming.EllipsisCharacter,
-            FormatFlags = StringFormatFlags.LineLimit,
-        };
 
         var textColor = frame.Look.TextColor is { } named
             ? ToGdi(ArrowColor.Parse(named))
@@ -200,12 +340,293 @@ internal static class OverlayRenderer
 
         using var textBrush = new SolidBrush(textColor);
 
-        var inner = new RectangleF(
+        // 正文按 run 排：普通文字一段段画，{{value}} 画成可点的复制芯片
+        using var layout = BuildTextLayout(g, frame, s);
+        // 普通文字不裁剪、不省略：矩形宽度就是量出来的宽度（换行已由 SignLayout 决定），
+        // 再套 EllipsisCharacter 会把紧贴矩形边缘的那一段整个吞掉。
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Near,
+            Trimming = StringTrimming.None,
+            FormatFlags = StringFormatFlags.NoWrap,
+        };
+
+        foreach (var run in layout.Layout.Runs)
+        {
+            if (run.IsValue)
+            {
+                DrawValueChip(g, frame, run, layout.Font, textBrush, outline, s);
+                continue;
+            }
+
+            g.DrawString(run.Text, layout.Font, textBrush,
+                new RectangleF(run.X, run.Y, run.Width, run.Height), format);
+        }
+    }
+
+    // ---------------- 牌子正文：文字 + {{value}} 复制芯片 ----------------
+
+    /// <summary>芯片内部的水平留白（逻辑像素）。</summary>
+    internal const float ChipPadX = 6f;
+
+    /// <summary>芯片文字与图标之间的间隔（逻辑像素）。</summary>
+    internal const float ChipGap = 4f;
+
+    /// <summary>芯片里复制图标 / 对钩的边长（逻辑像素）。</summary>
+    internal const float ChipIconSize = 13f;
+
+    /// <summary>芯片与相邻文字之间的呼吸（逻辑像素）。</summary>
+    private const float ChipMargin = 3f;
+
+    private static readonly Color ChipBackground = Color.FromArgb(255, 34, 40, 54);
+    private static readonly Color CopyCheckColor = Color.FromArgb(255, 76, 217, 130);
+
+    /// <summary>
+    /// 排版结果：字体（要跟着释放）+ <see cref="SignLayout"/> 算出的纯布局。
+    /// 绘制、命中判定和量尺寸都只看这一份结果，两边矩形永远一致。
+    /// </summary>
+    private sealed class SignTextLayout : IDisposable
+    {
+        public required Font Font { get; init; }
+        public required SignLayoutResult Layout { get; init; }
+
+        public void Dispose() => Font.Dispose();
+    }
+
+    /// <summary>
+    /// 量牌子的自然尺寸（逻辑像素，已含内边距、提示标题行和关闭按钮占位）。
+    ///
+    /// <para>必须走与绘制相同的 <see cref="BuildTextLayout"/>：直接对纯文本
+    /// <c>MeasureString</c> 量不到 <c>{{value}}</c> 芯片多出来的内边距、间隔和图标，
+    /// 量出来的卡片就装不下芯片，芯片会溢出或者被换行挤出去。</para>
+    ///
+    /// <para><paramref name="maxWidth"/> 是牌子允许的最大宽度（含内边距）。正文超过
+    /// <see cref="ArrowMetrics.MaximumLines"/> 行时返回的 <c>Truncated</c> 为 true，
+    /// 调用方据此缩小字号；高度已按行数封顶。</para>
+    /// </summary>
+    internal static (Size Size, bool Truncated) MeasureSignText(
+        Graphics g, string? text, float fontSize, bool closeButton, int maxWidth)
+    {
+        const float s = 1f;
+
+        var pad = PointerStyle.SignPadX * s;
+        var closeReserve = closeButton ? (CloseButtonDiameter + CloseButtonPadding * 2) * s : 0f;
+        var cardWidth = MathF.Max(80f, maxWidth);
+
+        // 用一块"宽度就是上限、高度足够长"的假牌子把正文排一遍，尺寸自然就出来了
+        var frame = new RenderFrame(
+            SignRect: new RectangleF(0, 0, cardWidth, 100_000f),
+            SignCenter: new PointF(cardWidth / 2f, 0f),
+            Target: new PointF(cardWidth / 2f, 1f),
+            Color: ArrowColor.Parse("red"),
+            SignFontSize: fontSize,
+            Text: text,
+            Look: new LookSpec(),
+            Metrics: ArrowMetrics.For(ArrowSize.Medium),
+            DpiScale: s,
+            AnimScale: 1d,
+            CloseButton: closeButton);
+
+        using var layout = BuildTextLayout(g, frame, s);
+
+        // 尺寸直接取自同一份排版结果：量的是要画的那几段，不会各算各的
+        var size = new Size(
+            (int)Math.Ceiling(layout.Layout.ContentWidth + pad * 2 + closeReserve),
+            (int)Math.Ceiling(
+                layout.Layout.ContentHeight + PointerStyle.SignPadY * 2 + PointerStyle.SignHeaderHeight));
+
+        return (size, layout.Layout.Truncated);
+    }
+
+    /// <summary>
+    /// 牌子正文区：扣掉内边距、提示标题行和关闭按钮的占位。
+    /// 绘制与命中判定都走这里，两边的矩形才不会错位。
+    /// </summary>
+    private static RectangleF SignTextArea(RenderFrame frame, float s)
+    {
+        var pad = PointerStyle.SignPadX * s;
+        var top = frame.SignRect.Top + PointerStyle.SignPadY * s + PointerStyle.SignHeaderHeight * s;
+        var closeReserve = frame.CloseButton ? (CloseButtonDiameter + CloseButtonPadding * 2) * s : 0f;
+
+        return new RectangleF(
             frame.SignRect.X + pad,
-            top + headerHeight,
-            Math.Max(1f, frame.SignRect.Width - pad * 2),
-            Math.Max(1f, frame.SignRect.Height - PointerStyle.SignPadY * s * 2 - headerHeight));
-        g.DrawString(frame.Text, font, textBrush, inner, format);
+            top,
+            Math.Max(1f, frame.SignRect.Width - pad * 2 - closeReserve),
+            Math.Max(1f, frame.SignRect.Bottom - PointerStyle.SignPadY * s - top));
+    }
+
+    /// <summary>
+    /// 把牌子正文排成若干 run：空白与 CJK 处都可以换行，芯片整体不拆开。
+    /// 含 <c>{{value}}</c> 时行高至少要装得下芯片里的图标。
+    /// </summary>
+    /// <summary>
+    /// 牌子的正文排版：选字体、把"量一段文字"作为委托交给 <see cref="SignLayout"/>，
+    /// 行的折法与矩形全部来自那份纯布局——绘制与测量用同一份数据。
+    /// </summary>
+    private static SignTextLayout BuildTextLayout(Graphics g, RenderFrame frame, float s)
+    {
+        var area = SignTextArea(frame, s);
+
+        // 字号在上游 fontSize 基础上随测量档位修正（MeasureSign 可能缩过字号）；
+        // 含 CJK 的文字显式优选中文字体，避免依赖 GDI+ 的字体替换链（不同机器行为不一致）
+        var fontPx = frame.SignFontSize * s / (g.DpiX / 96f);
+        var font = ResolveFont(fontPx, HasCjk(frame.Text));
+
+        var layout = SignLayout.Build(
+            frame.Text,
+            token => g.MeasureString(token, font).Width,
+            area.Left,
+            area.Top,
+            area.Width,
+            font.GetHeight(g),
+            new SignChipStyle(ChipPadX * s, ChipGap * s, ChipIconSize * s, ChipMargin * s),
+            ArrowMetrics.MaximumLines);
+
+        return new SignTextLayout { Font = font, Layout = layout };
+    }
+
+    /// <summary>芯片：深色圆角底 + 值文字 + 右侧复制图标（复制成功后变成 ✓）。</summary>
+    private static void DrawValueChip(
+        Graphics g, RenderFrame frame, SignRun run, Font font, Brush textBrush, Color outline, float s)
+    {
+        var rect = new RectangleF(run.X, run.Y, run.Width, run.Height);
+        using var path = RoundedRect(rect, MathF.Min(rect.Height / 2f, 6f * s));
+
+        using (var back = new SolidBrush(ChipBackground))
+        {
+            g.FillPath(back, path);
+        }
+
+        using (var edge = new Pen(Color.FromArgb(170, outline), Math.Max(1f, s)))
+        {
+            g.DrawPath(edge, path);
+        }
+
+        var icon = new RectangleF(
+            rect.Right - ChipPadX * s - ChipIconSize * s,
+            rect.Top + (rect.Height - ChipIconSize * s) / 2f,
+            ChipIconSize * s,
+            ChipIconSize * s);
+
+        var textLeft = rect.Left + ChipPadX * s;
+        var textRect = new RectangleF(
+            textLeft,
+            rect.Top,
+            Math.Max(1f, icon.Left - ChipGap * s - textLeft),
+            rect.Height);
+
+        using (var format = new StringFormat
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap,
+        })
+        {
+            g.DrawString(run.Text, font, textBrush, textRect, format);
+        }
+
+        if (frame.CopiedChip == run.ValueIndex)
+        {
+            DrawCheckIcon(g, icon, s);
+        }
+        else
+        {
+            DrawCopyIcon(g, icon, textBrush, s);
+        }
+    }
+
+    /// <summary>复制图标：两张叠在一起的纸。</summary>
+    private static void DrawCopyIcon(Graphics g, RectangleF box, Brush brush, float s)
+    {
+        var color = brush is SolidBrush solid ? solid.Color : Color.White;
+        var size = box.Width * 0.68f;
+        var offset = box.Width - size;
+
+        using var pen = new Pen(color, Math.Max(1f, 1.4f * s)) { LineJoin = LineJoin.Round };
+        using var back = RoundedRect(new RectangleF(box.Left, box.Top, size, size), size * 0.25f);
+        using var front = RoundedRect(new RectangleF(box.Left + offset, box.Top + offset, size, size), size * 0.25f);
+
+        g.DrawPath(pen, back);
+
+        // 前景那张纸先填芯片底色再描边，两张纸才分得开
+        using (var fill = new SolidBrush(ChipBackground))
+        {
+            g.FillPath(fill, front);
+        }
+
+        g.DrawPath(pen, front);
+    }
+
+    /// <summary>复制成功后的 ✓（约 1.5 秒，之后由 OverlayForm 重绘回复制图标）。</summary>
+    private static void DrawCheckIcon(Graphics g, RectangleF box, float s)
+    {
+        using var pen = new Pen(CopyCheckColor, Math.Max(1.5f, 2f * s))
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        };
+
+        g.DrawLines(pen, new[]
+        {
+            new PointF(box.Left + box.Width * 0.12f, box.Top + box.Height * 0.55f),
+            new PointF(box.Left + box.Width * 0.42f, box.Top + box.Height * 0.82f),
+            new PointF(box.Left + box.Width * 0.92f, box.Top + box.Height * 0.18f),
+        });
+    }
+
+    /// <summary>牌子右端、垂直居中的关闭按钮圆。</summary>
+    internal static RectangleF CloseButtonRect(RectangleF sign, float scale)
+    {
+        var diameter = CloseButtonDiameter * scale;
+        var pad = CloseButtonPadding * scale;
+        return new RectangleF(
+            sign.Right - pad - diameter,
+            sign.Top + sign.Height / 2f - diameter / 2f,
+            diameter,
+            diameter);
+    }
+
+    /// <summary>
+    /// 画关闭按钮。圆形 + 浅色 ×，颜色取自 --close-color / --close-x-color，
+    /// 非法取值一律回退默认色——渲染永远不该因为颜色崩掉。
+    /// </summary>
+    private static void DrawCloseButton(Graphics g, RenderFrame frame, Color outline, float s)
+    {
+        var circle = CloseButtonRect(frame.SignRect, s);
+        var disc = TryParseColor(frame.Look.CloseColor, Color.FromArgb(255, 60, 70, 88));
+        var cross = TryParseColor(frame.Look.CloseXColor, Color.FromArgb(255, 235, 240, 248));
+
+        using (var brush = new SolidBrush(disc))
+        {
+            g.FillEllipse(brush, circle);
+        }
+
+        using (var ring = new Pen(outline, Math.Max(1f, s)))
+        {
+            g.DrawEllipse(ring, circle);
+        }
+
+        var inset = circle.Width * 0.32f;
+        using var pen = new Pen(cross, Math.Max(1.5f, 2f * s)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(pen, circle.Left + inset, circle.Top + inset, circle.Right - inset, circle.Bottom - inset);
+        g.DrawLine(pen, circle.Right - inset, circle.Top + inset, circle.Left + inset, circle.Bottom - inset);
+    }
+
+    private static Color TryParseColor(string? value, Color fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+
+        try
+        {
+            return ToGdi(ArrowColor.Parse(value));
+        }
+        catch (ArgumentException)
+        {
+            return fallback;
+        }
     }
 
     /// <summary>上游 SignCorners 规则：round = 胶囊 min(h/2, 30pt)，sharp = 直角。</summary>

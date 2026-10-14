@@ -38,6 +38,14 @@ public partial class MainWindow : Window
     private long _demoDeadline;
     private string _demoStatusKey = "Str.DemoIdle";
 
+    /// <summary>Claude Code UserPromptSubmit 钩子：回答后清掉该会话的箭头。</summary>
+    private const string ClaudeHookJson =
+        "{\"hooks\": {\"UserPromptSubmit\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"agentpointer stop --hook\"}]}]}}";
+
+    /// <summary>与快速开始里展示的示例命令保持一致。</summary>
+    private const string SampleCommand =
+        "agentpointer point --app notepad --element \"File\" --text \"Click File\"";
+
     public string VersionLabel => "v" + AgentPointerVersion.Current;
 
     public MainWindow()
@@ -113,6 +121,15 @@ public partial class MainWindow : Window
         old?.Dispose();
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add(Tr("Str.TrayOpen"), null, (_, _) => ShowFromTray());
+        var actionable = !_actionRunning && !_demoActive && !_checking && _cliAvailable;
+        var pointMouse = menu.Items.Add(Tr("Str.TrayPointMouse"), null, async (_, _) => await OnTrayPointMouseAsync());
+        pointMouse.Enabled = actionable;
+        var clearArrows = menu.Items.Add(Tr("Str.TrayClearArrows"), null, async (_, _) => await OnTrayClearArrowsAsync());
+        clearArrows.Enabled = actionable;
+        var copyHook = menu.Items.Add(Tr("Str.TrayCopyHook"), null, (_, _) => OnTrayCopyHook());
+        copyHook.Enabled = actionable;
+        var doctor = menu.Items.Add(Tr("Str.TrayDoctor"), null, async (_, _) => await OnTrayDoctorAsync());
+        doctor.Enabled = actionable;
         var endDemo = menu.Items.Add(Tr("Str.StopDemo"), null, async (_, _) => await StopDemoAsync("Str.DemoEnded"));
         endDemo.Enabled = _demoActive;
         var language = new WinForms.ToolStripMenuItem(Tr("Str.TrayLanguage")) { Enabled = !_actionRunning && !_demoActive };
@@ -234,7 +251,7 @@ public partial class MainWindow : Window
         string? error = null;
         try
         {
-            using var response = ParseResponse(await RunCliAsync("install-skill", "--json"));
+            using var response = ParseResponse(await RunCliAsync("install-skill", "--force", "--json"));
         }
         catch (Exception ex) { error = ex.Message; }
         finally
@@ -311,6 +328,108 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>托盘动作：跑一条 CLI 命令，失败时用气泡提示友好的本地化消息。</summary>
+    private async Task RunTrayCommandAsync(params string[] args)
+    {
+        if (_actionRunning || !_cliAvailable) return;
+        _actionRunning = true;
+        UpdateActions();
+        try
+        {
+            using var response = ParseResponse(await RunCliAsync(args));
+        }
+        catch (Exception ex)
+        {
+            ShowBalloon(ex.Message);
+        }
+        finally
+        {
+            _actionRunning = false;
+            UpdateActions();
+        }
+    }
+
+    private Task OnTrayPointMouseAsync() => RunTrayCommandAsync(
+        "point", "--mouse", "--text", Tr("Str.PointerTestText"), "--duration", "4", "--json");
+
+    private Task OnTrayClearArrowsAsync() => RunTrayCommandAsync("stop", "--json");
+
+    private void OnTrayCopyHook() =>
+        ShowBalloon(Tr(CopyToClipboard(ClaudeHookJson) ? "Str.HookCopied" : "Str.ClipboardFailed"));
+
+    private async Task OnTrayDoctorAsync()
+    {
+        if (_actionRunning || !_cliAvailable) return;
+        _actionRunning = true;
+        UpdateActions();
+        string summary;
+        try
+        {
+            var result = await RunCliAsync("doctor", "--json");
+            summary = result.ExitCode == 0
+                ? BuildDoctorSummary(result.Output)
+                : FriendlyError(result.ExitCode, ExtractError(result));
+        }
+        catch (Exception ex)
+        {
+            summary = string.Format(CultureInfo.CurrentCulture, Tr("Str.ActionFailed"), ex.Message);
+        }
+        finally
+        {
+            _actionRunning = false;
+            UpdateActions();
+        }
+        if (IsVisible) SetupResult.Text = summary;
+        else System.Windows.MessageBox.Show(summary, Tr("Str.DoctorTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void ShowBalloon(string text) =>
+        _notifyIcon?.ShowBalloonTip(4000, "Agent Pointer", text, WinForms.ToolTipIcon.Info);
+
+    /// <summary>doctor --json 的字段名随版本变化，只做一层浅摘要。</summary>
+    private static string BuildDoctorSummary(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var parts = new List<string>();
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array) continue;
+            var value = property.Value.ToString();
+            if (value.Length > 0) parts.Add($"{property.Name}: {value}");
+            if (parts.Count == 6) break;
+        }
+        var body = parts.Count > 0 ? string.Join(" · ", parts) : document.RootElement.ToString();
+        return string.Format(CultureInfo.CurrentCulture, Tr("Str.DoctorSummary"), body);
+    }
+
+    private async void OnQuickTry(object sender, RoutedEventArgs e)
+    {
+        if (_actionRunning || !_cliAvailable || _demoActive) return;
+        _actionRunning = true;
+        UpdateActions();
+        try
+        {
+            using var response = ParseResponse(await RunCliAsync("point", "--mouse",
+                "--text", Tr("Str.PointerTestText"), "--duration", "4", "--json"));
+            SetupResult.Text = Tr("Str.PointerTestShown");
+        }
+        catch (Exception ex)
+        {
+            SetupResult.Text = string.Format(CultureInfo.CurrentCulture, Tr("Str.ActionFailed"), ex.Message);
+        }
+        finally
+        {
+            _actionRunning = false;
+            UpdateActions();
+        }
+    }
+
+    private void OnQuickCopyHook(object sender, RoutedEventArgs e) =>
+        SetupResult.Text = Tr(CopyToClipboard(ClaudeHookJson) ? "Str.HookCopied" : "Str.ClipboardFailed");
+
+    private void OnCopySampleCommand(object sender, RoutedEventArgs e) =>
+        SetupResult.Text = Tr(CopyToClipboard(SampleCommand) ? "Str.SampleCommandCopied" : "Str.ClipboardFailed");
+
     private void SetDemoStatus(string key)
     {
         _demoStatusKey = key;
@@ -322,6 +441,10 @@ public partial class MainWindow : Window
         var idle = !_actionRunning && !_demoActive && !_stoppingDemo && !_checking;
         StartDemoButton.IsEnabled = _cliAvailable && idle;
         InstallSkillsButton.IsEnabled = _cliAvailable && idle;
+        QuickInstallButton.IsEnabled = _cliAvailable && idle;
+        QuickTryButton.IsEnabled = _cliAvailable && idle;
+        QuickHookButton.IsEnabled = idle;
+        CopySampleButton.IsEnabled = idle;
         CopyPromptButton.IsEnabled = _skillAvailable && idle;
         RefreshButton.IsEnabled = idle;
         LanguageButton.IsEnabled = !_actionRunning && !_demoActive;
@@ -364,6 +487,12 @@ public partial class MainWindow : Window
     private static JsonDocument ParseResponse((int ExitCode, string Output, string Error) result)
     {
         if (result.ExitCode == 0) return JsonDocument.Parse(result.Output);
+        throw new InvalidOperationException(FriendlyError(result.ExitCode, ExtractError(result)));
+    }
+
+    /// <summary>CLI 的 error 字段优先，其次 stderr，最后才是原始输出。</summary>
+    private static string ExtractError((int ExitCode, string Output, string Error) result)
+    {
         var message = result.Error.Trim();
         try
         {
@@ -371,7 +500,23 @@ public partial class MainWindow : Window
             if (json.RootElement.TryGetProperty("error", out var error)) message = error.GetString() ?? message;
         }
         catch (JsonException) { }
-        throw new InvalidOperationException(message.Length > 0 ? message : Tr("Str.ComponentFailed"));
+        return message;
+    }
+
+    /// <summary>按退出码给出本地化提示，并附上 CLI 的原文。</summary>
+    private static string FriendlyError(int exitCode, string detail)
+    {
+        string? key = exitCode switch
+        {
+            2 => "Str.ErrorBadInput",
+            3 => "Str.ErrorTargetNotFound",
+            4 => "Str.ErrorPermission",
+            5 => "Str.ErrorUnsupported",
+            6 => "Str.ErrorInternal",
+            _ => null,
+        };
+        if (key is null) return detail.Length > 0 ? detail : Tr("Str.ComponentFailed");
+        return detail.Length > 0 ? string.Format(CultureInfo.CurrentCulture, Tr(key), detail) : Tr(key);
     }
 
     private void OnCopyPrompt(object sender, RoutedEventArgs e) =>
@@ -454,5 +599,5 @@ public partial class MainWindow : Window
 
 internal static class AgentPointerVersion
 {
-    public const string Current = "0.1.1";
+    public const string Current = "0.2.0";
 }
