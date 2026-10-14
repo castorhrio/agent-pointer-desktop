@@ -666,7 +666,8 @@ public static class ArgParser
           point          显示箭头并等待结束（默认 8 秒）
           start          后台显示箭头，上屏后返回（默认 300 秒，0 = 不限时）
           stop           移除同 owner 的箭头；无 owner 时只清未归属箭头
-                         --all 清当前 Windows 会话全部；--hook 需要 owner，空操作时静默
+                         --all 清当前 Windows 会话全部
+                         --hook 需要 owner（CLAUDE_PID / BIGARROW_OWNER_PID），不能与 --all 同用
           elements       列出窗口里可被 --element 匹配的元素，可用 --app/--window、--role、--match 过滤
           doctor         版本、显示器、DPI、窗口样式与命中测试（不证明点击送达）
           install-skill  安装到 ~/.claude/skills/agentpointer 与 ~/.agents/skills/agentpointer
@@ -710,7 +711,9 @@ public static class ArgParser
         点击交互：
           点牌子或箭杆会立刻收起箭头（原因 clicked）；目标附近与空白像素继续穿透到下层应用
           {{value}} 芯片点了只把值复制到剪贴板，箭头不收场，图标约 1.5 秒后从 ✓ 变回复制图标
-          stop --hook 供 Claude Code 的 UserPromptSubmit 钩子使用：静默、永不写 stdout、永远返回 0
+          stop --hook 供 Claude Code 的 UserPromptSubmit 钩子使用（Claude Code 会设置 CLAUDE_PID）：
+          必须能读到 CLAUDE_PID / BIGARROW_OWNER_PID，且不能与 --all 同用，否则退出码 2；
+          只收该 owner 的箭头，不读 stdin、文本模式不写 stdout、成功时退出码 0
           ~/.claude/settings.json：{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command",
           "command":"agentpointer stop --hook"}]}]}}
 
@@ -763,7 +766,8 @@ public static class ArgParser
           start          draw the arrow in the background and return (default 300 s, 0 = no limit)
           stop           remove the arrows of the same owner; without an owner only unowned arrows
                          --all clears every arrow in this Windows session
-                         --hook needs an owner and is silent (Claude Code UserPromptSubmit hook)
+                         --hook needs an owner (CLAUDE_PID / BIGARROW_OWNER_PID) and cannot be
+                         combined with --all
           elements       list what a window exposes to --element; filter with --app/--window, --role, --match
           doctor         version, monitors, DPI, overlay styles and hit testing (does not prove click delivery)
           install-skill  install into ~/.claude/skills/agentpointer and ~/.agents/skills/agentpointer
@@ -820,7 +824,9 @@ public static class ArgParser
           clicking the sign or the shaft ends the arrow at once; the target and the empty pixels stay
           click-through to the app below
           a {{value}} chip only copies the value (the arrow stays; the icon turns back after ~1.5 s)
-          stop --hook is silent, never writes stdout and always exits 0
+          stop --hook is the Claude Code UserPromptSubmit hook (Claude Code sets CLAUDE_PID): it needs
+          CLAUDE_PID / BIGARROW_OWNER_PID and cannot be combined with --all, otherwise it exits 2;
+          it stops only that owner's arrows, reads no stdin and writes no stdout in text mode
           ~/.claude/settings.json: {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command",
           "command":"agentpointer stop --hook"}]}]}}
 

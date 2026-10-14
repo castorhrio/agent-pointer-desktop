@@ -735,24 +735,19 @@ internal static class Program
 
     private static int RunStop(PointerCommand command)
     {
-        // Claude Code 的 UserPromptSubmit 钩子：绝不允许阻塞或污染用户的下一条提示词。
-        // 所以这里读干 stdin、吞掉一切错误、不写 stdout，并且永远返回 0。
-        if (command.StopHook)
+        // --hook 供 Claude Code 的 UserPromptSubmit 钩子使用，必须绑定一个 owner，
+        // 否则无从知道该收哪些箭头；--all 是会话级清理，与按 owner 收场互斥。
+        // 参数错误必须在做任何事之前退 2，而不是静默什么都不做。
+        if (command.StopHook && (command.OwnerPid is null || command.StopAll))
         {
-            DrainRedirectedStdin();
-
-            try
-            {
-                StopSignal.Signal(command.OwnerPid, command.StopAll);
-            }
-            catch (Exception)
-            {
-                // 钩子模式下任何失败都必须静默：用户的下一条提示词比收箭头重要
-            }
-
-            return ExitCode.Ok;
+            return Fail(ExitCode.BadInput, Lang.T(
+                "stop --hook 需要 CLAUDE_PID / BIGARROW_OWNER_PID，且不能与 --all 同用。",
+                "stop --hook needs CLAUDE_PID / BIGARROW_OWNER_PID and cannot be combined with --all."),
+                command.Json);
         }
 
+        // 注意：这里绝不读 stdin。钩子进程的 stdin 往往是宿主留下的、永不关闭的管道，
+        // 一旦去读就会把用户的下一条提示词一起挂住。
         var signalled = StopSignal.Signal(command.OwnerPid, command.StopAll);
 
         if (command.Json)
@@ -774,32 +769,6 @@ internal static class Program
         return ExitCode.Ok;
     }
 
-    /// <summary>
-    /// 钩子模式下 stdin 通常是 Claude Code 写进来的一段 JSON。
-    /// 读掉它（有超时上限）并丢弃：不读的话管道可能被写满，钩子反而会卡住。
-    /// stdin 没被重定向时直接返回，绝不阻塞在控制台输入上。
-    /// </summary>
-    private static void DrainRedirectedStdin()
-    {
-        try
-        {
-            if (!Console.IsInputRedirected) return;
-
-            var buffer = new char[4096];
-            var deadline = Environment.TickCount64 + 250;
-            while (Environment.TickCount64 < deadline)
-            {
-                var read = Console.In.Read(buffer, 0, buffer.Length);
-                if (read <= 0) return;
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
-    }
 
     // ---------------- doctor ----------------
 

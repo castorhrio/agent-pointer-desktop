@@ -157,7 +157,7 @@ The default label when `--text` is omitted only identifies a location; it cannot
 | `start` | Return after the overlay appears; default 300 seconds, `--duration 0` has no time limit |
 | `stop` | Stop only the same owner's overlays; without an owner, stop only unowned overlays |
 | `stop --all` | Clear all overlays in the current Windows session |
-| `stop --hook` | Require an owner environment variable and clear that owner's overlays; quiet if none exist |
+| `stop --hook` | Claude Code `UserPromptSubmit` hook: needs `CLAUDE_PID` / `BIGARROW_OWNER_PID` and cannot be combined with `--all` (otherwise exit code 2); stops only that owner's overlays |
 | `doctor` | Report displays, DPI, desktop availability, overlay styles, and hit testing |
 | `install-skill` | Install skill files for both agents; `--claude` / `--codex` pick one, `--force` overwrites, `--add-path` adds the CLI to the user PATH |
 | `elements` | List the elements a window exposes to `--element`, filtered by `--role` and `--match` |
@@ -218,8 +218,10 @@ Claude Code can clear leftover guidance the moment you send a new prompt:
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "agentpointer stop --hook"}]}]}}
 ```
 
-`stop --hook` reads and ignores its stdin, prints nothing to stdout, and always exits 0, so it can
-never block a prompt. Without `--hook`, `stop` still reports what it did.
+`stop --hook` never reads stdin, prints nothing to stdout and exits 0, so it can never block a
+prompt. It needs an owner (`CLAUDE_PID` / `BIGARROW_OWNER_PID`) and cannot be combined with
+`--all`: an ownerless or combined call exits with code 2 instead. Without `--hook`, `stop` still
+reports what it did.
 
 ## Coordinates and displays
 

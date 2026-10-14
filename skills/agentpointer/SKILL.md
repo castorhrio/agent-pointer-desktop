@@ -81,8 +81,9 @@ cleanup only). Clear leftover arrows the moment the human sends a new prompt:
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "agentpointer stop --hook"}]}]}}
 ```
 
-`stop --hook` needs an owner, is silent, never writes stdout and always exits 0. Edit hook settings
-only when the user asks for that integration.
+`stop --hook` needs an owner (`CLAUDE_PID` / `BIGARROW_OWNER_PID`) and cannot be combined with
+`--all`; anything else exits 2. It reads no stdin, is silent, never writes stdout and exits 0. Edit
+hook settings only when the user asks for that integration.
 
 ## Errors
 
